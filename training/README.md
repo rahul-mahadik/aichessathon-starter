@@ -28,7 +28,9 @@ DISTILL_DATA=training/data/distilled/100k-nodes \
 ```
 
 The result is `weights/nnue.npz`, consumed directly by the Numba runtime. A synthetic end-to-end
-training check is available locally with `make distill-smoke`.
+training check is available locally with `make distill-smoke`. The AWS launcher executes the
+DLAMI's `/opt/pytorch/bin/python` directly and adds pure-Python dependencies through a separate
+`PYTHONPATH` directory; nesting a venv would hide the DLAMI's relocatable CUDA Torch environment.
 
 ## Portable NVIDIA container fallback
 

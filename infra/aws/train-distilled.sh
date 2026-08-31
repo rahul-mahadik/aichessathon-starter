@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PYTORCH_PYTHON="${PYTORCH_PYTHON:-/opt/pytorch/bin/python}"
-TRAINING_VENV="${TRAINING_VENV:-.venv-aws-training}"
+TRAINING_DEPS="${TRAINING_DEPS:-.deps-aws-distilled}"
 DATA_PATH="${DISTILL_DATA:-training/data/distilled}"
 OUTPUT_PATH="${DISTILL_OUTPUT:-weights/nnue.npz}"
 
@@ -12,14 +12,15 @@ if [[ ! -x "$PYTORCH_PYTHON" ]]; then
 fi
 
 nvidia-smi
-if [[ ! -x "$TRAINING_VENV/bin/python" ]]; then
-  "$PYTORCH_PYTHON" -m venv --system-site-packages "$TRAINING_VENV"
-  "$TRAINING_VENV/bin/python" -m pip install --upgrade pip
-  "$TRAINING_VENV/bin/python" -m pip install -r training/requirements-aws.txt
+if [[ ! -d "$TRAINING_DEPS/chess" ]]; then
+  "$PYTORCH_PYTHON" -m pip install \
+    --target "$TRAINING_DEPS" \
+    -r training/requirements-distilled-aws.txt
 fi
+export PYTHONPATH="$PWD/$TRAINING_DEPS${PYTHONPATH:+:$PYTHONPATH}"
 
-"$TRAINING_VENV/bin/python" training/device_check.py --require-cuda
-"$TRAINING_VENV/bin/python" -m training.train_distilled \
+"$PYTORCH_PYTHON" training/device_check.py --require-cuda
+"$PYTORCH_PYTHON" -m training.train_distilled \
   --device cuda \
   --data "$DATA_PATH" \
   --output "$OUTPUT_PATH" \
@@ -31,4 +32,3 @@ if [[ -n "${AICHESSATHON_ARTIFACTS_URI:-}" ]]; then
   aws s3 cp "${OUTPUT_PATH%.npz}.json" \
     "${AICHESSATHON_ARTIFACTS_URI%/}/models/$(basename "${OUTPUT_PATH%.npz}.json")"
 fi
-

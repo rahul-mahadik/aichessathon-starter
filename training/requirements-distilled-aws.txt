@@ -1,0 +1,2 @@
+# Added beside the DLAMI's existing torch/numpy environment via PYTHONPATH.
+chess==1.11.2
