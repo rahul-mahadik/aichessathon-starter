@@ -1,0 +1,6 @@
+# The base image already provides CUDA-enabled torch and numpy.
+chess==1.11.2
+onnx==1.18.0
+onnxruntime==1.22.0
+tensorboard==2.19.0
+tqdm==4.67.1

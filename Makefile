@@ -1,20 +1,51 @@
 SHELL := /bin/bash
 
-.PHONY: setup play arena zip gate
+UV ?= uv
+PYTHON_VERSION ?= 3.12
+BENCH_OPPONENT ?= baselines/minimax
+BENCH_ROUNDS ?= 1
+BENCH_BASE_MS ?= 10000
+GPU_IMAGE ?= aichessathon-training:local
+
+.PHONY: setup play arena bench aws-bench train-setup train-smoke aws-train gpu-build gpu-smoke gpu-train zip gate
 
 setup:
-	uv sync
+	$(UV) sync --python $(PYTHON_VERSION)
 
 play:
-	uv run python -m harness.play --white . --black baselines/greedy $(if $(FEN),--fen "$(FEN)")
+	$(UV) run python -m harness.play --white . --black baselines/greedy $(if $(FEN),--fen "$(FEN)")
 
 arena:
-	uv run python -m harness.arena --opponent baselines/greedy --games 20
+	$(UV) run python -m harness.arena --opponent baselines/greedy --games 20
+
+bench:
+	$(UV) run python -m benchmarks.run --opponent $(BENCH_OPPONENT) --rounds $(BENCH_ROUNDS) --base-ms $(BENCH_BASE_MS) --output benchmark-results/latest.json
+
+aws-bench:
+	bash infra/aws/benchmark.sh
+
+train-setup:
+	$(UV) sync --python $(PYTHON_VERSION) --group training
+
+train-smoke:
+	$(UV) run --group training python training/train.py --smoke --device cpu --epochs 1 --output /tmp/aichessathon-smoke/value.onnx
+
+aws-train:
+	bash infra/aws/train.sh
+
+gpu-build:
+	docker build -f training/Dockerfile -t $(GPU_IMAGE) .
+
+gpu-smoke:
+	docker run --rm --gpus all $(GPU_IMAGE) python training/device_check.py --require-cuda
+
+gpu-train:
+	docker run --rm --gpus all -v "$(CURDIR):/workspace" $(GPU_IMAGE) python training/train.py --device cuda --data training/data/positions.npz --output weights/value.onnx
 
 zip:
-	uv run python -m harness.package
+	$(UV) run python -m harness.package
 
 gate:
-	uv run ruff check .
-	uv run mypy
-	uv run python -m harness.arena --opponent baselines/random --games 2 --base-ms 5000
+	$(UV) run ruff check .
+	$(UV) run mypy
+	$(UV) run python -m harness.arena --opponent baselines/random --games 2 --base-ms 5000

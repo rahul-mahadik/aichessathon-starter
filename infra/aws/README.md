@@ -1,0 +1,76 @@
+# AWS compute
+
+The recommended split is deliberately simple: EC2 for the first iteration, S3 for datasets and
+artifacts, and Systems Manager for access. AWS Batch becomes worthwhile only after jobs need queues,
+automatic Spot replacement, or many concurrent machines.
+
+## Local control plane
+
+Install AWS CLI v2 and the Session Manager plugin on the Mac, then authenticate through your
+organization's AWS IAM Identity Center rather than storing long-lived keys:
+
+```bash
+brew install awscli
+brew install --cask session-manager-plugin
+aws configure sso
+aws sts get-caller-identity
+```
+
+Choose the AWS account, Region, VPC, budget, and S3 artifact bucket before provisioning anything.
+
+## CPU benchmarking
+
+Use a fixed-performance x86 compute-optimized instance, such as `c8i` or `c8a`; avoid Flex and
+burstable families for timing-sensitive comparisons. A practical start is `c8i.4xlarge`, running
+four concurrent matches so the two single-threaded agents in each match have CPU headroom.
+
+On Amazon Linux 2023:
+
+```bash
+bash infra/aws/bootstrap-cpu.sh
+git clone <team-fork-url> aichessathon
+cd aichessathon
+BENCH_WORKERS=4 BENCH_ROUNDS=25 bash infra/aws/benchmark.sh
+```
+
+Always compare engine versions on the same instance family, AMI, Region, worker count, and time
+control. Record the instance type and AMI alongside each retained result. Spot instances are fine
+for large statistical runs when interruption is acceptable; use On-Demand for final latency and
+clock-margin calibration.
+
+## GPU training
+
+Start with AWS's current **Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.13 (Amazon Linux
+2023)**. It supplies `/opt/pytorch/bin/python`, the NVIDIA driver, CUDA stack, SSM agent, Docker,
+PyTorch 2.13, and ONNX Runtime 1.29. This is unusually convenient because those framework versions
+match the competition runtime.
+
+Suggested starting sizes:
+
+- `g6.xlarge`: one NVIDIA L4 with 22 GiB GPU memory; economical for the small value network.
+- `g6e.xlarge`: one NVIDIA L40S with 44 GiB GPU memory when larger batches or models justify it.
+- P-series instances are unnecessary until profiling proves the workload can use them.
+
+After cloning the exact training commit and downloading the dataset:
+
+```bash
+aws s3 cp s3://your-bucket/data/positions.npz training/data/positions.npz
+AICHESSATHON_ARTIFACTS_URI=s3://your-bucket/aichessathon \
+  bash infra/aws/train.sh --epochs 20 --batch-size 8192
+```
+
+`train.sh` makes a small virtual environment that inherits the DLAMI's CUDA-enabled PyTorch rather
+than replacing it with the root project's CPU wheel. It verifies CUDA before spending time on the
+training job and uploads the ONNX model and metadata when an artifact URI is provided.
+
+## Cost and lifecycle guardrails
+
+1. Set an AWS Budget before launching GPU instances.
+2. Use encrypted gp3 volumes and an instance role, never static credentials.
+3. Tag instances with project, owner, workload, and expiry.
+4. Put datasets/checkpoints in S3; treat EC2 disks as disposable.
+5. Stop or terminate instances immediately after jobs. Stopped instances still incur EBS charges.
+6. Check regional capacity and current pricing before selecting a family.
+
+See `requirements.md` before provisioning. None of the files in this directory creates AWS
+resources by itself.

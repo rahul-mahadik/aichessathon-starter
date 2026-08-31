@@ -1,6 +1,13 @@
 .venv/
+.venv-aws-training/
 __pycache__/
 .mypy_cache/
 .ruff_cache/
 submission.zip
 *.pgn
+.env
+:memory:.ses
+benchmark-results/
+training/checkpoints/
+training/data/
+training/runs/

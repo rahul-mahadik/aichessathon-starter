@@ -14,6 +14,9 @@ make play
 That plays your agent against a baseline over a full 120 s + 0.5 s game and prints the result.
 When you like it, `make zip` and drop `submission.zip` on your dashboard.
 
+For reproducible paired-position benchmarks, GPU training, and the local-to-submission workflow,
+see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+
 ## Writing an agent
 
 `agent.py` is the whole submission. One function:
