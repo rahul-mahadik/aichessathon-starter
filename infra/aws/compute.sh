@@ -99,6 +99,13 @@ status() {
     --output table
 }
 
+gpu_quota() {
+  aws_project service-quotas list-service-quotas \
+    --service-code ec2 \
+    --query 'Quotas[?QuotaCode==`L-DB2E81BA` || QuotaCode==`L-3819A6DF`].{Name:QuotaName,vCPUs:Value}' \
+    --output table
+}
+
 case "${1:-help}" in
   deploy) deploy ;;
   launch-cpu) launch cpu on-demand ;;
@@ -106,6 +113,7 @@ case "${1:-help}" in
   launch-gpu) launch gpu on-demand ;;
   launch-gpu-spot) launch gpu spot ;;
   status) status ;;
+  quota) gpu_quota ;;
   connect)
     require_managed_instance "${2:?instance id required}"
     aws_project ssm start-session --target "$2"
@@ -129,6 +137,6 @@ case "${1:-help}" in
   help|*)
     echo "Usage: bash infra/aws/compute.sh <command>"
     echo "Commands: deploy, launch-cpu, launch-cpu-spot, launch-gpu, launch-gpu-spot,"
-    echo "          status, outputs, connect INSTANCE, start INSTANCE, stop INSTANCE, terminate INSTANCE"
+    echo "          status, quota, outputs, connect INSTANCE, start INSTANCE, stop INSTANCE, terminate INSTANCE"
     ;;
 esac

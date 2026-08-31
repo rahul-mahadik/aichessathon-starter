@@ -80,6 +80,7 @@ Launch only when there is a training job ready. New AWS accounts normally need t
 4-vCPU G-family quota approved first:
 
 ```bash
+bash infra/aws/compute.sh quota
 bash infra/aws/compute.sh launch-gpu       # predictable On-Demand capacity
 bash infra/aws/compute.sh launch-gpu-spot  # cheaper, interruption-tolerant jobs
 ```
