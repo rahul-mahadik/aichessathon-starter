@@ -6,23 +6,40 @@ automatic Spot replacement, or many concurrent machines.
 
 ## Local control plane
 
-Install AWS CLI v2 and the Session Manager plugin on the Mac, then authenticate through your
-organization's AWS IAM Identity Center rather than storing long-lived keys:
+Install AWS CLI v2 and the Session Manager plugin on the Mac, then authenticate with temporary
+browser credentials rather than storing long-lived keys:
 
 ```bash
 brew install awscli
 brew install --cask session-manager-plugin
-aws configure sso
-aws sts get-caller-identity
+aws login --profile aichessathon
+aws sts get-caller-identity --profile aichessathon
 ```
 
-Choose the AWS account, Region, VPC, budget, and S3 artifact bucket before provisioning anything.
+This project uses `us-east-1`. Deploy the shared, no-hourly-charge resources once:
+
+```bash
+AWS_PROFILE=aichessathon AWS_REGION=us-east-1 bash infra/aws/compute.sh deploy
+bash infra/aws/compute.sh outputs
+```
+
+The CloudFormation stack creates a private versioned artifact bucket, a narrowly scoped EC2 role,
+an outbound-only security group, and CPU/GPU launch templates. It does not launch instances. Both
+templates use encrypted gp3 disks, require IMDSv2, have no inbound ports, and schedule a shutdown
+after six hours on every boot. For an intentionally longer job, run
+`sudo systemctl disable --now aichessathon-autostop.timer` on that worker and stop it manually.
 
 ## CPU benchmarking
 
-Use a fixed-performance x86 compute-optimized instance, such as `c8i` or `c8a`; avoid Flex and
-burstable families for timing-sensitive comparisons. A practical start is `c8i.4xlarge`, running
-four concurrent matches so the two single-threaded agents in each match have CPU headroom.
+Use a fixed-performance x86 compute-optimized instance; avoid Flex and burstable families for
+timing-sensitive comparisons. The default is `c7i.2xlarge` (8 vCPUs) with three benchmark workers,
+leaving headroom for the OS and harness:
+
+```bash
+bash infra/aws/compute.sh launch-cpu
+bash infra/aws/compute.sh status
+bash infra/aws/compute.sh connect INSTANCE_ID
+```
 
 On Amazon Linux 2023:
 
@@ -30,7 +47,7 @@ On Amazon Linux 2023:
 bash infra/aws/bootstrap-cpu.sh
 git clone <team-fork-url> aichessathon
 cd aichessathon
-BENCH_WORKERS=4 BENCH_ROUNDS=25 bash infra/aws/benchmark.sh
+BENCH_WORKERS=3 BENCH_ROUNDS=25 bash infra/aws/benchmark.sh
 ```
 
 Always compare engine versions on the same instance family, AMI, Region, worker count, and time
@@ -40,10 +57,10 @@ clock-margin calibration.
 
 ## GPU training
 
-Start with AWS's current **Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.13 (Amazon Linux
-2023)**. It supplies `/opt/pytorch/bin/python`, the NVIDIA driver, CUDA stack, SSM agent, Docker,
-PyTorch 2.13, and ONNX Runtime 1.29. This is unusually convenient because those framework versions
-match the competition runtime.
+The GPU template uses AWS's current **Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.12 (Amazon
+Linux 2023)**. It supplies `/opt/pytorch/bin/python`, the NVIDIA driver, CUDA stack, and SSM agent.
+Training framework versions need not equal the competition's CPU runtime; exported ONNX models are
+still smoke-tested locally against the pinned competition package versions before submission.
 
 Suggested starting sizes:
 
@@ -59,6 +76,14 @@ AICHESSATHON_ARTIFACTS_URI=s3://your-bucket/aichessathon \
   bash infra/aws/train.sh --epochs 20 --batch-size 8192
 ```
 
+Launch only when there is a training job ready. New AWS accounts normally need the adjustable
+4-vCPU G-family quota approved first:
+
+```bash
+bash infra/aws/compute.sh launch-gpu       # predictable On-Demand capacity
+bash infra/aws/compute.sh launch-gpu-spot  # cheaper, interruption-tolerant jobs
+```
+
 `train.sh` makes a small virtual environment that inherits the DLAMI's CUDA-enabled PyTorch rather
 than replacing it with the root project's CPU wheel. It verifies CUDA before spending time on the
 training job and uploads the ONNX model and metadata when an artifact URI is provided.
@@ -72,5 +97,12 @@ training job and uploads the ONNX model and metadata when an artifact URI is pro
 5. Stop or terminate instances immediately after jobs. Stopped instances still incur EBS charges.
 6. Check regional capacity and current pricing before selecting a family.
 
-See `requirements.md` before provisioning. None of the files in this directory creates AWS
-resources by itself.
+Stop a reusable worker or terminate a disposable one as soon as the job finishes:
+
+```bash
+bash infra/aws/compute.sh stop INSTANCE_ID
+bash infra/aws/compute.sh terminate INSTANCE_ID
+```
+
+See `requirements.md` before provisioning. `cloudformation.yaml` is the source of truth for shared
+resources, and `compute.sh` is the reviewed interface for deployment and instance lifecycle.

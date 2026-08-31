@@ -1,0 +1,351 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cost-controlled CPU benchmarking and GPU training resources for AI Chessathon
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: aichessathon
+    AllowedPattern: "[a-zA-Z0-9-]+"
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  CpuInstanceType:
+    Type: String
+    Default: c7i.2xlarge
+  GpuInstanceType:
+    Type: String
+    Default: g6.xlarge
+  CpuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  GpuAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.12-amazon-linux-2023/latest/ami-id
+  GitRepositoryUrl:
+    Type: String
+    Default: https://github.com/rahul-mahadik/aichessathon-starter.git
+  GitRef:
+    Type: String
+    Default: codex/environment-setup
+
+Resources:
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: cloudformation
+
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub "${ArtifactsBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  ComputeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ProjectArtifacts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListProjectBucket
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !GetAtt ArtifactsBucket.Arn
+              - Sid: ReadWriteProjectArtifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource: !Sub "${ArtifactsBucket.Arn}/*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: cloudformation
+
+  ComputeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ComputeRole
+
+  ComputeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Outbound-only access for AI Chessathon workers managed through SSM
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Package, GitHub, AWS API, and S3 access
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-compute"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: cloudformation
+
+  CpuLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              DeleteOnTermination: true
+              Encrypted: true
+              VolumeSize: 40
+              VolumeType: gp3
+        IamInstanceProfile:
+          Arn: !GetAtt ComputeInstanceProfile.Arn
+        ImageId: !Ref CpuAmiId
+        InstanceInitiatedShutdownBehavior: stop
+        InstanceType: !Ref CpuInstanceType
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+          HttpTokens: required
+          InstanceMetadataTags: enabled
+        Monitoring:
+          Enabled: false
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeleteOnTermination: true
+            DeviceIndex: 0
+            Groups:
+              - !Ref ComputeSecurityGroup
+            SubnetId: !Ref SubnetId
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${ProjectName}-cpu"
+              - Key: Project
+                Value: !Ref ProjectName
+              - Key: Workload
+                Value: benchmark
+              - Key: ManagedBy
+                Value: cloudformation
+              - Key: AutoStopAfter
+                Value: 6h
+          - ResourceType: volume
+            Tags:
+              - Key: Project
+                Value: !Ref ProjectName
+              - Key: Workload
+                Value: benchmark
+              - Key: ManagedBy
+                Value: cloudformation
+        UserData:
+          Fn::Base64: !Sub |
+            #!/usr/bin/env bash
+            set -euxo pipefail
+            dnf install -y git jq unzip
+            export UV_INSTALL_DIR=/usr/local/bin
+            curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+            if [[ ! -d /home/ec2-user/aichessathon/.git ]]; then
+              runuser -u ec2-user -- git clone --branch '${GitRef}' --single-branch '${GitRepositoryUrl}' /home/ec2-user/aichessathon
+            fi
+            chown -R ec2-user:ec2-user /home/ec2-user/aichessathon
+            cat >/etc/profile.d/aichessathon.sh <<'EOF'
+            export AWS_REGION='${AWS::Region}'
+            export AWS_DEFAULT_REGION='${AWS::Region}'
+            export AICHESSATHON_ARTIFACTS_URI='s3://${ArtifactsBucket}/artifacts'
+            export OMP_NUM_THREADS=1
+            export MKL_NUM_THREADS=1
+            export OPENBLAS_NUM_THREADS=1
+            export NUMBA_NUM_THREADS=1
+            EOF
+            cat >/etc/systemd/system/aichessathon-autostop.service <<'EOF'
+            [Unit]
+            Description=Stop the AI Chessathon worker after its safety window
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/bin/systemctl poweroff
+            EOF
+            cat >/etc/systemd/system/aichessathon-autostop.timer <<'EOF'
+            [Unit]
+            Description=Six-hour AI Chessathon compute safety timer
+
+            [Timer]
+            OnBootSec=6h
+            AccuracySec=1min
+            Unit=aichessathon-autostop.service
+
+            [Install]
+            WantedBy=timers.target
+            EOF
+            systemctl daemon-reload
+            systemctl enable --now aichessathon-autostop.timer
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Project
+              Value: !Ref ProjectName
+            - Key: Workload
+              Value: benchmark
+            - Key: ManagedBy
+              Value: cloudformation
+
+  GpuLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              DeleteOnTermination: true
+              Encrypted: true
+              VolumeSize: 100
+              VolumeType: gp3
+        IamInstanceProfile:
+          Arn: !GetAtt ComputeInstanceProfile.Arn
+        ImageId: !Ref GpuAmiId
+        InstanceInitiatedShutdownBehavior: stop
+        InstanceType: !Ref GpuInstanceType
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 1
+          HttpTokens: required
+          InstanceMetadataTags: enabled
+        Monitoring:
+          Enabled: false
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeleteOnTermination: true
+            DeviceIndex: 0
+            Groups:
+              - !Ref ComputeSecurityGroup
+            SubnetId: !Ref SubnetId
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${ProjectName}-gpu"
+              - Key: Project
+                Value: !Ref ProjectName
+              - Key: Workload
+                Value: training
+              - Key: ManagedBy
+                Value: cloudformation
+              - Key: AutoStopAfter
+                Value: 6h
+          - ResourceType: volume
+            Tags:
+              - Key: Project
+                Value: !Ref ProjectName
+              - Key: Workload
+                Value: training
+              - Key: ManagedBy
+                Value: cloudformation
+        UserData:
+          Fn::Base64: !Sub |
+            #!/usr/bin/env bash
+            set -euxo pipefail
+            dnf install -y git jq unzip
+            if [[ ! -d /home/ec2-user/aichessathon/.git ]]; then
+              runuser -u ec2-user -- git clone --branch '${GitRef}' --single-branch '${GitRepositoryUrl}' /home/ec2-user/aichessathon
+            fi
+            chown -R ec2-user:ec2-user /home/ec2-user/aichessathon
+            cat >/etc/profile.d/aichessathon.sh <<'EOF'
+            export AWS_REGION='${AWS::Region}'
+            export AWS_DEFAULT_REGION='${AWS::Region}'
+            export AICHESSATHON_ARTIFACTS_URI='s3://${ArtifactsBucket}/artifacts'
+            EOF
+            cat >/etc/systemd/system/aichessathon-autostop.service <<'EOF'
+            [Unit]
+            Description=Stop the AI Chessathon worker after its safety window
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/bin/systemctl poweroff
+            EOF
+            cat >/etc/systemd/system/aichessathon-autostop.timer <<'EOF'
+            [Unit]
+            Description=Six-hour AI Chessathon compute safety timer
+
+            [Timer]
+            OnBootSec=6h
+            AccuracySec=1min
+            Unit=aichessathon-autostop.service
+
+            [Install]
+            WantedBy=timers.target
+            EOF
+            systemctl daemon-reload
+            systemctl enable --now aichessathon-autostop.timer
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Project
+              Value: !Ref ProjectName
+            - Key: Workload
+              Value: training
+            - Key: ManagedBy
+              Value: cloudformation
+
+Outputs:
+  ArtifactBucketName:
+    Description: Private versioned bucket for datasets, benchmarks, and model artifacts
+    Value: !Ref ArtifactsBucket
+  ArtifactUri:
+    Value: !Sub "s3://${ArtifactsBucket}/artifacts"
+  CpuLaunchTemplateId:
+    Value: !Ref CpuLaunchTemplate
+  GpuLaunchTemplateId:
+    Value: !Ref GpuLaunchTemplate
+  ComputeRoleArn:
+    Value: !GetAtt ComputeRole.Arn
+  SecurityGroupId:
+    Value: !Ref ComputeSecurityGroup
