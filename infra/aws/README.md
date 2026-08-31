@@ -55,6 +55,17 @@ control. Record the instance type and AMI alongside each retained result. Spot i
 for large statistical runs when interruption is acceptable; use On-Demand for final latency and
 clock-margin calibration.
 
+For the offline Stockfish teacher pilot on the same worker:
+
+```bash
+sudo bash infra/aws/install-stockfish.sh
+TEACHER_NODES=100000 TEACHER_MULTIPV=8 TEACHER_LIMIT=8 \
+  bash infra/aws/teacher-pilot.sh
+```
+
+The installer verifies the official Stockfish 18 AVX2 archive checksum. Run the pilot before
+choosing Batch fleet size; scaling estimates should use measured positions/second, not guesses.
+
 ## GPU training
 
 The GPU template uses AWS's current **Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.12 (Amazon

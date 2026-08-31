@@ -8,7 +8,7 @@ BENCH_BASE_MS ?= 10000
 GPU_IMAGE ?= aichessathon-training:local
 STOCKFISH ?= stockfish
 
-.PHONY: setup play arena bench test distill-smoke distill-e2e-smoke aws-deploy aws-status aws-cpu aws-gpu aws-bench train-setup train-smoke aws-train aws-train-distilled gpu-build gpu-smoke gpu-train zip gate
+.PHONY: setup play arena bench test distill-smoke distill-e2e-smoke aws-deploy aws-status aws-cpu aws-gpu aws-bench aws-teacher-pilot train-setup train-smoke aws-train aws-train-distilled gpu-build gpu-smoke gpu-train zip gate
 
 setup:
 	$(UV) sync --python $(PYTHON_VERSION)
@@ -47,6 +47,9 @@ aws-gpu:
 
 aws-bench:
 	bash infra/aws/benchmark.sh
+
+aws-teacher-pilot:
+	bash infra/aws/teacher-pilot.sh
 
 train-setup:
 	$(UV) sync --python $(PYTHON_VERSION) --group training

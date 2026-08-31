@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
+if [[ -z "${UV_BIN:-}" ]]; then
+  UV_BIN="$(command -v uv || true)"
+  UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
+fi
 WORKERS="${BENCH_WORKERS:-1}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 BASE_MS="${BENCH_BASE_MS:-10000}"

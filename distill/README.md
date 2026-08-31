@@ -28,6 +28,17 @@ record preserves raw centipawns or mates, WDL when available, requested budget, 
 seldepth, nodes, candidate moves, and optional PVs. Target transformations happen later, so they
 can be changed without rerunning the expensive teacher.
 
+On an AWS CPU worker, install the checksum-pinned official AVX2 build and measure the initial
+100k-node/MultiPV-8 workload before scaling:
+
+```bash
+sudo bash infra/aws/install-stockfish.sh
+TEACHER_LIMIT=8 bash infra/aws/teacher-pilot.sh
+```
+
+The pinned binary is Stockfish 18 from the project's official GitHub release. The installer exists
+only on offline compute workers and nothing copies the binary into `weights/` or the submission.
+
 ## Create a teacher shard
 
 ```bash
@@ -66,4 +77,3 @@ uv run python -m training.train_distilled \
 
 The export contains an int8 king-conditioned feature table and small float32 dense layers. The
 runtime loads it with `allow_pickle=False`; no training code or third-party engine is shipped.
-
