@@ -89,6 +89,13 @@ bash infra/aws/compute.sh launch-gpu-spot  # cheaper, interruption-tolerant jobs
 than replacing it with the root project's CPU wheel. It verifies CUDA before spending time on the
 training job and uploads the ONNX model and metadata when an artifact URI is provided.
 
+The primary sparse evaluator uses `train-distilled.sh` instead:
+
+```bash
+DISTILL_DATA=training/data/distilled/100k-nodes \
+  bash infra/aws/train-distilled.sh --epochs 10 --batch-size 1024
+```
+
 ## Cost and lifecycle guardrails
 
 1. Set an AWS Budget before launching GPU instances.

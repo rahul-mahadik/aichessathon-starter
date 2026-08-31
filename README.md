@@ -17,6 +17,10 @@ When you like it, `make zip` and drop `submission.zip` on your dashboard.
 For reproducible paired-position benchmarks, GPU training, and the local-to-submission workflow,
 see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
+The search-distillation design and reproducible ablations are documented in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); offline Stockfish labeling and sparse training live
+under [`distill/`](distill/README.md). Stockfish is never part of the submission.
+
 ## Writing an agent
 
 `agent.py` is the whole submission. One function:
@@ -61,7 +65,11 @@ evaluation worth searching with.
 
 ```
 agent.py             your submission
+search_engine.py     team-written iterative-deepening alpha-beta search
+nnue_runtime.py      quantized sparse evaluator inference
 baselines/           random, greedy, minimax, numba; each is a directory with an agent.py
+distill/             offline-only Stockfish labeling and dataset conversion
+training/            student training and quantized export
 harness/runner.py    the process the platform runs your agent in
 harness/referee.py   the clock, legality, draw and adjudication rules
 harness/rules.py     the event constants the harness enforces

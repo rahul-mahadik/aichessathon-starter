@@ -1,29 +1,48 @@
-"""The submission entrypoint. The platform imports this file and calls get_move."""
+"""Search-distilled AI Chessathon submission entrypoint."""
 
-import random
+from pathlib import Path
 
 import chess
 
-# Import time runs once per game, inside a 60 second budget, before your clock starts.
-# Load weights and build tables out here, not inside get_move.
+from nnue_runtime import QuantizedEvaluator
+from search_engine import SearchEngine, handcrafted_evaluation
+
+_WEIGHTS = Path(__file__).with_name("weights") / "nnue.npz"
+if _WEIGHTS.exists():
+    _learned = QuantizedEvaluator(_WEIGHTS)
+    _learned.warmup()
+    _search = SearchEngine(_learned)
+else:
+    _search = SearchEngine(handcrafted_evaluation)
+
+_game_board: chess.Board | None = None
+
+
+def _synchronize(fen: str) -> chess.Board:
+    """Preserve move-stack history when the next FEN follows the prior position."""
+    global _game_board
+    incoming = chess.Board(fen)
+    if _game_board is None:
+        _game_board = incoming
+        return _game_board
+    if _game_board.fen() == incoming.fen():
+        return _game_board
+    for move in list(_game_board.legal_moves):
+        _game_board.push(move)
+        if _game_board.fen() == incoming.fen():
+            return _game_board
+        _game_board.pop()
+    _game_board = incoming
+    return _game_board
 
 
 def get_move(fen: str, time_left_ms: int) -> str:
-    """Return a legal move in UCI notation.
-
-    fen           the position to move in; your colour is the side to move
-    time_left_ms  your clock before this move, in milliseconds
-    returns       "e2e4", or "e7e8q" for a promotion
-
-    The process stays alive between your moves, so state you keep on a module or in a
-    closure survives to the next call. It does not survive to the next game.
-
-    print() is safe. Your stdout is redirected away from the protocol stream, discarded
-    during rated games and shown back to you in the validation log.
-    """
-    board = chess.Board(fen)
-
-    # Everything from here down is yours to replace. baselines/greedy searches one ply,
-    # baselines/minimax searches two. Neither is strong. Reading them is the fastest way
-    # to see the shape of a search, and beating them is the first real milestone.
-    return random.choice(list(board.legal_moves)).uci()
+    """Return the last move from a completed iterative-deepening iteration."""
+    board = _synchronize(fen)
+    result = _search.choose(board, time_left_ms)
+    board.push(result.move)
+    print(
+        f"depth={result.depth} score={result.score:.0f} "
+        f"nodes={result.nodes} elapsed_ms={result.elapsed_ms}"
+    )
+    return result.move.uci()

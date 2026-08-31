@@ -15,9 +15,20 @@ ONNX Runtime reproduces the PyTorch output. It tests the pipeline, not chess str
 
 ## AWS GPU host
 
-AWS is the primary GPU path. Use the current PyTorch 2.13 Deep Learning AMI and follow
-[`infra/aws/README.md`](../infra/aws/README.md); it already includes the matching CUDA-enabled
-framework, NVIDIA driver, ONNX Runtime, and Systems Manager agent.
+AWS is the primary GPU path. Use the PyTorch 2.12 Deep Learning AMI configured in
+[`infra/aws/README.md`](../infra/aws/README.md); it includes the CUDA-enabled framework, NVIDIA
+driver, and Systems Manager agent. Exported artifacts are tested against the tournament's pinned
+CPU package versions before submission.
+
+For the search-distilled sparse evaluator, build teacher shards first and run:
+
+```bash
+DISTILL_DATA=training/data/distilled/100k-nodes \
+  bash infra/aws/train-distilled.sh --epochs 10 --batch-size 1024
+```
+
+The result is `weights/nnue.npz`, consumed directly by the Numba runtime. A synthetic end-to-end
+training check is available locally with `make distill-smoke`.
 
 ## Portable NVIDIA container fallback
 

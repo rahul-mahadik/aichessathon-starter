@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import chess
+import numpy as np
+import torch
+
+from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
+from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
+from nnue_runtime import QuantizedEvaluator
+from training.nnue import SparseValueNetwork, export_quantized
+
+
+class DistillationTests(unittest.TestCase):
+    def record(self) -> TeacherRecord:
+        score = TeacherScore(cp=42, mate=None, wdl=(320, 500, 180))
+        candidate = Candidate(
+            move="e2e4",
+            score=score,
+            pv=("e2e4", "e7e5"),
+            depth=12,
+            seldepth=18,
+            nodes=10_000,
+        )
+        return TeacherRecord(
+            fen=chess.STARTING_FEN,
+            teacher="Stockfish 18",
+            node_budget=10_000,
+            depth_budget=None,
+            multipv=1,
+            root_score=score,
+            candidates=(candidate,),
+            best_move="e2e4",
+        )
+
+    def test_schema_gzip_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "teacher.jsonl.gz"
+            self.assertEqual(write_records(path, [self.record()]), 1)
+            self.assertEqual(list(read_records([path])), [self.record()])
+
+    def test_child_target_flips_perspective(self) -> None:
+        group = record_to_group(self.record())
+        self.assertTrue(group.value_mask[0])
+        self.assertTrue(group.value_mask[1])
+        self.assertAlmostEqual(float(group.targets[0]), 0.14, places=5)
+        self.assertAlmostEqual(float(group.targets[1]), -0.14, places=5)
+        self.assertTrue(np.all(group.features[2:] == PADDING_INDEX))
+
+    def test_sparse_indices_are_in_range(self) -> None:
+        encoded = encode_board(chess.Board())
+        active = encoded[encoded != PADDING_INDEX]
+        self.assertEqual(active.size, 64)
+        self.assertTrue(np.all(active >= 0))
+        self.assertTrue(np.all(active < FEATURE_DIM))
+
+    def test_quantized_runtime_tracks_pytorch(self) -> None:
+        torch.manual_seed(3)
+        model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        board = chess.Board()
+        features = torch.as_tensor(encode_board(board)).long().unsqueeze(0)
+        turns = torch.tensor([True])
+        expected = float(model(features, turns).item())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nnue.npz"
+            export_quantized(model, path)
+            actual = QuantizedEvaluator(path).raw_value(board)
+        self.assertAlmostEqual(actual, expected, delta=0.02)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

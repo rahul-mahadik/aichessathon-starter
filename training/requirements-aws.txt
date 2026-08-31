@@ -1,4 +1,5 @@
 # Installed into a venv that inherits the PyTorch 2.12 DLAMI packages.
+chess==1.11.2
 onnx>=1.18,<2
 tensorboard>=2.19,<3
 tqdm>=4.67,<5
