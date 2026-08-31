@@ -16,5 +16,10 @@ if [[ -z "$BINARY" ]]; then
   exit 1
 fi
 install -m 0755 "$BINARY" "$INSTALL_PATH"
-"$INSTALL_PATH" --version
-
+UCI_OUTPUT="$(printf 'uci\nquit\n' | "$INSTALL_PATH")"
+UCI_ID="$(grep -m1 '^id name Stockfish 18' <<<"$UCI_OUTPUT")"
+if [[ -z "$UCI_ID" ]]; then
+  echo "Installed binary did not identify itself as Stockfish 18" >&2
+  exit 1
+fi
+printf '%s\n' "$UCI_ID"
