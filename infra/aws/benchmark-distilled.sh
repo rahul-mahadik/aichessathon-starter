@@ -19,11 +19,17 @@ cp agent.py nnue_runtime.py search_engine.py "$CANDIDATE/"
 cp agent.py nnue_runtime.py search_engine.py "$OPPONENT/"
 aws s3 cp "$RUN_PREFIX/models/$MODEL_NAME/${MODEL_NAME}.npz" \
   "$CANDIDATE/weights/nnue.npz"
+export BENCH_CANDIDATE_MODEL="$MODEL_NAME"
+export BENCH_CANDIDATE_SHA256
+BENCH_CANDIDATE_SHA256="$(sha256sum "$CANDIDATE/weights/nnue.npz" | cut -d ' ' -f 1)"
 if [[ "$OPPONENT_MODEL_NAME" != "fallback" ]]; then
   mkdir -p "$OPPONENT/weights"
   aws s3 cp "$RUN_PREFIX/models/$OPPONENT_MODEL_NAME/${OPPONENT_MODEL_NAME}.npz" \
     "$OPPONENT/weights/nnue.npz"
+  export BENCH_OPPONENT_SHA256
+  BENCH_OPPONENT_SHA256="$(sha256sum "$OPPONENT/weights/nnue.npz" | cut -d ' ' -f 1)"
 fi
+export BENCH_OPPONENT_MODEL="$OPPONENT_MODEL_NAME"
 
 BENCH_AGENT="$CANDIDATE" \
 BENCH_OPPONENT="$OPPONENT" \

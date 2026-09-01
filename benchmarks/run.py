@@ -86,7 +86,7 @@ def candidate_score(outcome: Outcome, candidate_is_white: bool) -> float:
 def git_metadata() -> dict[str, Any]:
     def git(*arguments: str) -> str:
         result = subprocess.run(
-            ["git", *arguments],
+            ["git", "-c", f"safe.directory={Path.cwd().resolve()}", *arguments],
             check=False,
             capture_output=True,
             text=True,
@@ -195,6 +195,10 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             "aws_ami_id": os.environ.get("AWS_EC2_AMI_ID"),
             "candidate": str(candidate),
             "opponent": str(opponent),
+            "candidate_model": os.environ.get("BENCH_CANDIDATE_MODEL"),
+            "candidate_model_sha256": os.environ.get("BENCH_CANDIDATE_SHA256"),
+            "opponent_model": os.environ.get("BENCH_OPPONENT_MODEL"),
+            "opponent_model_sha256": os.environ.get("BENCH_OPPONENT_SHA256"),
             "positions": str(arguments.positions),
             "rounds": arguments.rounds,
             "base_ms": arguments.base_ms,
