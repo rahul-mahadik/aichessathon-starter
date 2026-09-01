@@ -60,6 +60,7 @@ class DistillationTests(unittest.TestCase):
         self.assertEqual(summary["records"], 1)
         self.assertEqual(summary["candidates_per_record"], 1.0)
         self.assertEqual(summary["duplicate_fens"], 0)
+        self.assertEqual(summary["incomplete_multipv_records"], 0)
 
     def test_child_target_flips_perspective(self) -> None:
         group = record_to_group(self.record())

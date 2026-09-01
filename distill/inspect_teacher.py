@@ -19,6 +19,8 @@ def inspect(paths: list[Path]) -> dict[str, Any]:
     mate_scores = 0
     cp_scores = 0
     duplicates = 0
+    incomplete_multipv_records = 0
+    requested_multipv: dict[str, int] = {}
     minimum_depth: int | None = None
     maximum_depth: int | None = None
     budgets: dict[str, int] = {}
@@ -36,6 +38,10 @@ def inspect(paths: list[Path]) -> dict[str, Any]:
         budgets[budget] = budgets.get(budget, 0) + 1
         board = chess.Board(record.fen)
         legal_moves = set(board.legal_moves)
+        requested_key = str(record.multipv)
+        requested_multipv[requested_key] = requested_multipv.get(requested_key, 0) + 1
+        expected_candidates = min(record.multipv, len(legal_moves))
+        incomplete_multipv_records += int(len(record.candidates) != expected_candidates)
         for candidate in record.candidates:
             move = chess.Move.from_uci(candidate.move)
             if move not in legal_moves:
@@ -63,6 +69,7 @@ def inspect(paths: list[Path]) -> dict[str, Any]:
         "records": records,
         "unique_fens": len(seen),
         "duplicate_fens": duplicates,
+        "incomplete_multipv_records": incomplete_multipv_records,
         "candidates": candidates,
         "candidates_per_record": candidates / records,
         "wdl_coverage": wdl_scores / candidates,
@@ -71,6 +78,7 @@ def inspect(paths: list[Path]) -> dict[str, Any]:
         "minimum_depth": minimum_depth,
         "maximum_depth": maximum_depth,
         "budgets": budgets,
+        "requested_multipv": requested_multipv,
     }
 
 
@@ -86,10 +94,16 @@ def main() -> None:
         raise SystemExit(
             f"expected {arguments.expected_records} records, found {summary['records']}"
         )
-    if summary["candidates_per_record"] != arguments.expected_candidates:
+    expected_key = str(arguments.expected_candidates)
+    expected_requests = summary["requested_multipv"].get(expected_key, 0)
+    if expected_requests != summary["records"]:
         raise SystemExit(
-            f"expected {arguments.expected_candidates} candidates per record, "
-            f"found {summary['candidates_per_record']}"
+            f"expected every record to request MultiPV {arguments.expected_candidates}, "
+            f"found {expected_requests} of {summary['records']}"
+        )
+    if summary["incomplete_multipv_records"]:
+        raise SystemExit(
+            f"found {summary['incomplete_multipv_records']} incomplete MultiPV records"
         )
     if summary["duplicate_fens"]:
         raise SystemExit(f"found {summary['duplicate_fens']} duplicate FENs")
