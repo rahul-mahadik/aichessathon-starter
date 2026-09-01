@@ -42,10 +42,10 @@ if [[ -n "$REUSE_DATASET_MODEL" ]]; then
   fi
 else
   for tier in $TIERS; do
-    case "$tier" in
-      medium|deep) ;;
-      *) echo "DISTILL_TIERS contains unsupported tier: $tier" >&2; exit 2 ;;
-    esac
+    if [[ ! "$tier" =~ ^[a-zA-Z0-9-]+$ ]]; then
+      echo "DISTILL_TIERS contains an unsafe label: $tier" >&2
+      exit 2
+    fi
     mkdir -p "$RAW_DIRECTORY/$tier"
     aws s3 sync "$RUN_PREFIX/raw/$tier/" "$RAW_DIRECTORY/$tier/" \
       --exclude "*" --include "*.jsonl.gz"

@@ -12,7 +12,7 @@ Parameters:
     Type: AWS::EC2::Subnet::Id
   CpuInstanceType:
     Type: String
-    Default: c7i.2xlarge
+    Default: c7i.8xlarge
   GpuInstanceType:
     Type: String
     Default: g6.xlarge
@@ -28,23 +28,101 @@ Parameters:
   GitRef:
     Type: String
     Default: codex/environment-setup
-  MonthlyBudgetLimit:
+  TargetBudgetLimit:
     Type: Number
     Default: 200
     MinValue: 1
     MaxValue: 10000
+  HardBudgetLimit:
+    Type: Number
+    Default: 400
+    MinValue: 1
+    MaxValue: 10000
+  BaselineProjectSpend:
+    Type: Number
+    Default: 20
+    MinValue: 0
+    MaxValue: 10000
+  CpuHourlyRateCeiling:
+    Type: Number
+    Default: 2.25
+    MinValue: 0.01
+    MaxValue: 100
+  GpuHourlyRateCeiling:
+    Type: Number
+    Default: 2.50
+    MinValue: 0.01
+    MaxValue: 100
+  WorkerSafetyHours:
+    Type: Number
+    Default: 6
+    MinValue: 1
+    MaxValue: 24
 
 Resources:
   ProjectBudget:
     Type: AWS::Budgets::Budget
     Properties:
       Budget:
-        BudgetName: !Sub "${ProjectName}-monthly-guardrail"
+        BudgetName: !Sub "${ProjectName}-monthly-target"
         BudgetLimit:
-          Amount: !Ref MonthlyBudgetLimit
+          Amount: !Ref TargetBudgetLimit
           Unit: USD
         BudgetType: COST
+        CostFilters:
+          TagKeyValue:
+            - !Join ["", ["user:Project$", !Ref ProjectName]]
         TimeUnit: MONTHLY
+
+  ProjectHardBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${ProjectName}-monthly-emergency-stop"
+        BudgetLimit:
+          Amount: !Ref HardBudgetLimit
+          Unit: USD
+        BudgetType: COST
+        CostFilters:
+          TagKeyValue:
+            - !Join ["", ["user:Project$", !Ref ProjectName]]
+        TimeUnit: MONTHLY
+
+  BudgetActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSBudgetsActions_RolePolicyForResourceAdministrationWithSSM
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: cloudformation
+
+  SpendReservations:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: BillingPeriod
+          AttributeType: S
+      KeySchema:
+        - AttributeName: BillingPeriod
+          KeyType: HASH
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: cloudformation
 
   ArtifactsBucket:
     Type: AWS::S3::Bucket
@@ -193,7 +271,7 @@ Resources:
               - Key: ManagedBy
                 Value: cloudformation
               - Key: AutoStopAfter
-                Value: 6h
+                Value: !Sub "${WorkerSafetyHours}h"
           - ResourceType: volume
             Tags:
               - Key: Project
@@ -232,10 +310,10 @@ Resources:
             EOF
             cat >/etc/systemd/system/aichessathon-autostop.timer <<'EOF'
             [Unit]
-            Description=Six-hour AI Chessathon compute safety timer
+            Description=AI Chessathon compute safety timer
 
             [Timer]
-            OnBootSec=6h
+            OnBootSec=${WorkerSafetyHours}h
             AccuracySec=1min
             Unit=aichessathon-autostop.service
 
@@ -291,7 +369,7 @@ Resources:
               - Key: ManagedBy
                 Value: cloudformation
               - Key: AutoStopAfter
-                Value: 6h
+                Value: !Sub "${WorkerSafetyHours}h"
           - ResourceType: volume
             Tags:
               - Key: Project
@@ -324,10 +402,10 @@ Resources:
             EOF
             cat >/etc/systemd/system/aichessathon-autostop.timer <<'EOF'
             [Unit]
-            Description=Six-hour AI Chessathon compute safety timer
+            Description=AI Chessathon compute safety timer
 
             [Timer]
-            OnBootSec=6h
+            OnBootSec=${WorkerSafetyHours}h
             AccuracySec=1min
             Unit=aichessathon-autostop.service
 
@@ -347,9 +425,29 @@ Resources:
               Value: cloudformation
 
 Outputs:
-  BudgetName:
-    Description: Account-level monthly visibility guardrail; AWS Budgets does not stop compute
-    Value: !Sub "${ProjectName}-monthly-guardrail"
+  TargetBudgetName:
+    Description: Project-tagged monthly operating target
+    Value: !Sub "${ProjectName}-monthly-target"
+  HardBudgetName:
+    Description: Project-tagged emergency budget used by the dynamic EC2 stop action
+    Value: !Sub "${ProjectName}-monthly-emergency-stop"
+  BudgetActionRoleArn:
+    Value: !GetAtt BudgetActionRole.Arn
+  SpendReservationsTableName:
+    Description: Atomic worst-case launch reservations enforcing the local hard ceiling
+    Value: !Ref SpendReservations
+  TargetBudgetLimit:
+    Value: !Ref TargetBudgetLimit
+  HardBudgetLimit:
+    Value: !Ref HardBudgetLimit
+  BaselineProjectSpend:
+    Value: !Ref BaselineProjectSpend
+  CpuHourlyRateCeiling:
+    Value: !Ref CpuHourlyRateCeiling
+  GpuHourlyRateCeiling:
+    Value: !Ref GpuHourlyRateCeiling
+  WorkerSafetyHours:
+    Value: !Ref WorkerSafetyHours
   ArtifactBucketName:
     Description: Private versioned bucket for datasets, benchmarks, and model artifacts
     Value: !Ref ArtifactsBucket

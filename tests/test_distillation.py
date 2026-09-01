@@ -10,10 +10,12 @@ import torch
 
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
 from distill.inspect_teacher import inspect
+from distill.mine_depth_disagreements import depth_distance
 from distill.sample_gigafish import _valid_unique_positions, reservoir_sample
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
 from training.nnue import SparseValueNetwork, export_quantized
+from training.train_distilled import Batch, losses
 
 
 class DistillationTests(unittest.TestCase):
@@ -83,6 +85,67 @@ class DistillationTests(unittest.TestCase):
         self.assertAlmostEqual(float(group.targets[1]), -0.14, places=5)
         self.assertTrue(np.all(group.features[2:] == PADDING_INDEX))
 
+    def test_depth_distance_detects_best_move_and_ranking_change(self) -> None:
+        shallow = TeacherRecord(
+            fen=chess.STARTING_FEN,
+            teacher="Stockfish 18",
+            node_budget=100_000,
+            depth_budget=None,
+            multipv=2,
+            root_score=TeacherScore(cp=20, mate=None, wdl=None),
+            candidates=(
+                Candidate(
+                    move="e2e4",
+                    score=TeacherScore(cp=30, mate=None, wdl=None),
+                    pv=(),
+                    depth=12,
+                    seldepth=16,
+                    nodes=100_000,
+                ),
+                Candidate(
+                    move="d2d4",
+                    score=TeacherScore(cp=10, mate=None, wdl=None),
+                    pv=(),
+                    depth=12,
+                    seldepth=16,
+                    nodes=100_000,
+                ),
+            ),
+            best_move="e2e4",
+        )
+        deep = TeacherRecord(
+            fen=chess.STARTING_FEN,
+            teacher="Stockfish 18",
+            node_budget=1_000_000,
+            depth_budget=None,
+            multipv=2,
+            root_score=TeacherScore(cp=45, mate=None, wdl=None),
+            candidates=(
+                Candidate(
+                    move="d2d4",
+                    score=TeacherScore(cp=60, mate=None, wdl=None),
+                    pv=(),
+                    depth=18,
+                    seldepth=24,
+                    nodes=1_000_000,
+                ),
+                Candidate(
+                    move="e2e4",
+                    score=TeacherScore(cp=5, mate=None, wdl=None),
+                    pv=(),
+                    depth=18,
+                    seldepth=24,
+                    nodes=1_000_000,
+                ),
+            ),
+            best_move="d2d4",
+        )
+        distance = depth_distance(shallow, deep, ranking_margin=0.0)
+        self.assertTrue(distance.top_move_changed)
+        self.assertEqual(distance.common_candidates, 2)
+        self.assertEqual(distance.ranking_disagreement, 1.0)
+        self.assertGreater(distance.distance, 2.0)
+
     def test_sparse_indices_are_in_range(self) -> None:
         encoded = encode_board(chess.Board())
         active = encoded[encoded != PADDING_INDEX]
@@ -115,6 +178,45 @@ class DistillationTests(unittest.TestCase):
             board.turn = not board.turn
             second = evaluator.raw_value(board)
         self.assertAlmostEqual(first, -second, places=6)
+
+    def test_training_antisymmetry_loss_uses_turn_flipped_predictions(self) -> None:
+        predictions = torch.tensor([[0.2, -0.8, -0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        batch: Batch = {
+            "features": torch.zeros((1, 9, 2, 32), dtype=torch.long),
+            "turns": torch.ones((1, 9), dtype=torch.bool),
+            "targets": predictions.clone(),
+            "value_mask": torch.tensor(
+                [[True, True, True, False, False, False, False, False, False]]
+            ),
+            "candidate_scores": torch.tensor(
+                [[0.8, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
+            ),
+            "candidate_mask": torch.tensor(
+                [[True, True, False, False, False, False, False, False]]
+            ),
+        }
+        _, symmetric_metrics = losses(
+            predictions,
+            -predictions,
+            batch,
+            ranking_weight=0.25,
+            top_move_weight=0.25,
+            antisymmetry_weight=1.0,
+            top_k=2,
+            top_k_ranking_boost=4.0,
+        )
+        _, violating_metrics = losses(
+            predictions,
+            predictions,
+            batch,
+            ranking_weight=0.25,
+            top_move_weight=0.25,
+            antisymmetry_weight=1.0,
+            top_k=2,
+            top_k_ranking_boost=4.0,
+        )
+        self.assertEqual(symmetric_metrics["antisymmetry_mse"], 0.0)
+        self.assertGreater(violating_metrics["antisymmetry_mse"], 0.0)
 
 
 if __name__ == "__main__":

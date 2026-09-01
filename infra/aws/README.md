@@ -26,16 +26,23 @@ bash infra/aws/compute.sh outputs
 The CloudFormation stack creates a private versioned artifact bucket, a narrowly scoped EC2 role,
 an outbound-only security group, and CPU/GPU launch templates. It does not launch instances. Both
 templates use encrypted gp3 disks, require IMDSv2, have no inbound ports, and schedule a shutdown
-after six hours on every boot. It also creates an account-level monthly AWS Budget for visibility;
-the default is $200. AWS Budgets is not a hard stop, so worker count and lifetime remain the actual
-spend controls. For an intentionally longer job, run
+after six hours on every boot. It creates project-tagged budgets at a $200 operating target and a
+$400 emergency threshold. Because AWS billing data is delayed, the launch wrapper also atomically
+reserves every worker's worst-case six-hour cost in DynamoDB and refuses a launch that would take
+the month above $400. The emergency AWS Budget action stops the active project instances when its
+delayed threshold fires. For an intentionally longer job, run
 `sudo systemctl disable --now aichessathon-autostop.timer` on that worker and stop it manually.
+
+The reservation gate is deliberately conservative: it does not release reserved dollars when a
+worker finishes early. Override the target, ceiling, baseline estimate, or safety window only at
+deployment time with `AICHESSATHON_TARGET_BUDGET`, `AICHESSATHON_HARD_BUDGET`,
+`AICHESSATHON_BASELINE_SPEND`, and `AICHESSATHON_SAFETY_HOURS`.
 
 ## CPU benchmarking
 
 Use a fixed-performance x86 compute-optimized instance; avoid Flex and burstable families for
-timing-sensitive comparisons. The default is `c7i.2xlarge` (8 vCPUs) with three benchmark workers,
-leaving headroom for the OS and harness:
+timing-sensitive comparisons. The scaled default is `c7i.8xlarge` (32 vCPUs). Keep one game worker
+per physical core or less for wall-clock calibration:
 
 ```bash
 bash infra/aws/compute.sh launch-cpu
@@ -76,6 +83,23 @@ are immutable and reruns skip them.
 ```bash
 TEACHER_RUN_ID=pilot-001 TEACHER_TIER=medium TEACHER_NODES=100000 \
 TEACHER_SHARDS=8 TEACHER_PARALLELISM=8 bash infra/aws/teacher-worker.sh
+```
+
+The scale path launches eight 32-vCPU workers by default, exactly matching the current 256-vCPU
+Standard-instance quota:
+
+```bash
+bash infra/aws/compute.sh launch-teacher 8
+```
+
+Use `TEACHER_LABEL` to annotate the same `deep` input shards at several budgets without collisions,
+for example `deep-10k`, `deep-100k`, and `deep-1m`. After all three ladders finish, mine positions
+where deeper search changed the value or ordering:
+
+```bash
+uv run python -m distill.mine_depth_disagreements \
+  --low raw/deep-10k --medium raw/deep-100k --deep raw/deep-1m \
+  --select 100000 --output mined
 ```
 
 ## GPU training
@@ -137,6 +161,18 @@ DISTILL_REUSE_DATASET_MODEL=medium DISTILL_EXPECTED_RECORDS=100000 \
     --accumulator 32 --hidden 32 --bottleneck 16 --top-move-weight 0.25
 ```
 
+The correctness-gate recipe enforces negamax antisymmetry during training and gives comparisons
+involving the teacher's top three moves four times the ranking weight:
+
+```bash
+DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=corrected-64 \
+DISTILL_REUSE_DATASET_MODEL=combined DISTILL_EXPECTED_RECORDS=110000 \
+  bash infra/aws/distill-gpu-run.sh --epochs 20 --batch-size 1024 \
+    --accumulator 64 --hidden 48 --bottleneck 24 \
+    --ranking-weight 0.5 --top-move-weight 0.75 --antisymmetry-weight 0.5 \
+    --top-k 3 --top-k-ranking-boost 4
+```
+
 Compare an exported model and the handcrafted evaluator against retained teacher traces:
 
 ```bash
@@ -169,6 +205,12 @@ DISTILL_OPPONENT_MODEL_NAME=medium BENCH_ROUNDS=10 \
 4. Put datasets/checkpoints in S3; treat EC2 disks as disposable.
 5. Stop or terminate instances immediately after jobs. Stopped instances still incur EBS charges.
 6. Check regional capacity and current pricing before selecting a family.
+
+Audit both the conservative reservation ledger and delayed AWS Budgets view with:
+
+```bash
+bash infra/aws/compute.sh budget-status
+```
 
 Stop a reusable worker or terminate a disposable one as soon as the job finishes:
 

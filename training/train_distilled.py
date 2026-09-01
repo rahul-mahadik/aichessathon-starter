@@ -149,9 +149,13 @@ def synthetic_shard(path: Path, records: int, seed: int) -> Path:
 
 def losses(
     predictions: torch.Tensor,
+    flipped_predictions: torch.Tensor,
     batch: Batch,
     ranking_weight: float,
     top_move_weight: float,
+    antisymmetry_weight: float,
+    top_k: int,
+    top_k_ranking_boost: float,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     value_errors = (predictions - batch["targets"])[batch["value_mask"]]
     value_loss = torch.mean(value_errors.square())
@@ -163,7 +167,12 @@ def losses(
     valid = batch["candidate_mask"]
     pair_mask = valid.unsqueeze(2) & valid.unsqueeze(1) & (teacher_difference > 0.02)
     if torch.any(pair_mask):
-        ranking_loss = functional.softplus(-4.0 * predicted_difference[pair_mask]).mean()
+        ranks = torch.arange(teacher_q.shape[1], device=teacher_q.device)
+        top_pair = (ranks.unsqueeze(1) < top_k) | (ranks.unsqueeze(0) < top_k)
+        pair_weights = torch.where(top_pair, top_k_ranking_boost, 1.0)
+        selected_weights = pair_weights.unsqueeze(0).expand_as(teacher_difference)[pair_mask]
+        pair_losses = functional.softplus(-4.0 * predicted_difference[pair_mask])
+        ranking_loss = torch.sum(pair_losses * selected_weights) / torch.sum(selected_weights)
         ranking_accuracy = torch.mean(
             (predicted_difference[pair_mask] > 0).float()
         ).item()
@@ -177,13 +186,22 @@ def losses(
     )
     top_move_loss = functional.cross_entropy(top_move_logits, top_move_targets)
     top_move_accuracy = torch.mean((top_move_logits.argmax(dim=1) == 0).float()).item()
-    total = value_loss + ranking_weight * ranking_loss + top_move_weight * top_move_loss
+    antisymmetry_errors = (predictions + flipped_predictions)[batch["value_mask"]]
+    antisymmetry_loss = torch.mean(antisymmetry_errors.square())
+    total = (
+        value_loss
+        + ranking_weight * ranking_loss
+        + top_move_weight * top_move_loss
+        + antisymmetry_weight * antisymmetry_loss
+    )
     return total, {
         "value_mse": float(value_loss.detach()),
         "ranking_loss": float(ranking_loss.detach()),
         "ranking_accuracy": ranking_accuracy,
         "top_move_loss": float(top_move_loss.detach()),
         "top_move_accuracy": top_move_accuracy,
+        "antisymmetry_mse": float(antisymmetry_loss.detach()),
+        "antisymmetry_mae": float(antisymmetry_errors.abs().mean().detach()),
         "value_mae": float(value_errors.abs().mean().detach()),
     }
 
@@ -193,6 +211,9 @@ def evaluate(
     batches: Iterator[Batch],
     ranking_weight: float,
     top_move_weight: float,
+    antisymmetry_weight: float,
+    top_k: int,
+    top_k_ranking_boost: float,
 ) -> dict[str, float]:
     totals: dict[str, float] = {}
     count = 0
@@ -200,7 +221,17 @@ def evaluate(
     with torch.inference_mode():
         for batch in batches:
             predictions = model(batch["features"], batch["turns"])
-            loss, metrics = losses(predictions, batch, ranking_weight, top_move_weight)
+            flipped_predictions = model(batch["features"], ~batch["turns"])
+            loss, metrics = losses(
+                predictions,
+                flipped_predictions,
+                batch,
+                ranking_weight,
+                top_move_weight,
+                antisymmetry_weight,
+                top_k,
+                top_k_ranking_boost,
+            )
             metrics["total_loss"] = float(loss.detach())
             for name, value in metrics.items():
                 totals[name] = totals.get(name, 0.0) + value
@@ -218,6 +249,9 @@ def main() -> None:
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--ranking-weight", type=float, default=0.25)
     parser.add_argument("--top-move-weight", type=float, default=0.25)
+    parser.add_argument("--antisymmetry-weight", type=float, default=0.0)
+    parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument("--top-k-ranking-boost", type=float, default=1.0)
     parser.add_argument("--accumulator", type=int, default=128)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--bottleneck", type=int, default=32)
@@ -226,8 +260,16 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.epochs < 1 or arguments.batch_size < 1:
         parser.error("--epochs and --batch-size must be positive")
-    if arguments.ranking_weight < 0 or arguments.top_move_weight < 0:
+    if min(
+        arguments.ranking_weight,
+        arguments.top_move_weight,
+        arguments.antisymmetry_weight,
+    ) < 0:
         parser.error("loss weights must be non-negative")
+    if arguments.top_k < 1 or arguments.top_k > MAX_CANDIDATES:
+        parser.error(f"--top-k must be between 1 and {MAX_CANDIDATES}")
+    if arguments.top_k_ranking_boost < 1:
+        parser.error("--top-k-ranking-boost must be at least 1")
 
     random.seed(arguments.seed)
     np.random.seed(arguments.seed)
@@ -277,11 +319,16 @@ def main() -> None:
         for batch in batches:
             optimizer.zero_grad(set_to_none=True)
             predictions = model(batch["features"], batch["turns"])
+            flipped_predictions = model(batch["features"], ~batch["turns"])
             loss, _ = losses(
                 predictions,
+                flipped_predictions,
                 batch,
                 arguments.ranking_weight,
                 arguments.top_move_weight,
+                arguments.antisymmetry_weight,
+                arguments.top_k,
+                arguments.top_k_ranking_boost,
             )
             loss.backward()
             optimizer.step()
@@ -299,6 +346,9 @@ def main() -> None:
             ),
             arguments.ranking_weight,
             arguments.top_move_weight,
+            arguments.antisymmetry_weight,
+            arguments.top_k,
+            arguments.top_k_ranking_boost,
         )
         if last_validation["total_loss"] < best_validation_loss:
             best_validation_loss = last_validation["total_loss"]
@@ -330,6 +380,9 @@ def main() -> None:
             "learning_rate": arguments.learning_rate,
             "ranking_weight": arguments.ranking_weight,
             "top_move_weight": arguments.top_move_weight,
+            "antisymmetry_weight": arguments.antisymmetry_weight,
+            "top_k": arguments.top_k,
+            "top_k_ranking_boost": arguments.top_k_ranking_boost,
             "seed": arguments.seed,
             "best_epoch": best_epoch,
             "best_validation_loss": best_validation_loss,

@@ -3,6 +3,7 @@ set -euo pipefail
 
 RUN_ID="${TEACHER_RUN_ID:?TEACHER_RUN_ID is required}"
 TIER="${TEACHER_TIER:?TEACHER_TIER is required}"
+LABEL="${TEACHER_LABEL:-$TIER}"
 NODE_BUDGET="${TEACHER_NODES:?TEACHER_NODES is required}"
 SHARD_COUNT="${TEACHER_SHARDS:?TEACHER_SHARDS is required}"
 WORKER_INDEX="${TEACHER_WORKER_INDEX:-0}"
@@ -17,6 +18,10 @@ RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 
 if [[ "$TIER" != "medium" && "$TIER" != "deep" ]]; then
   echo "TEACHER_TIER must be medium or deep" >&2
+  exit 2
+fi
+if [[ ! "$LABEL" =~ ^[a-zA-Z0-9-]+$ ]]; then
+  echo "TEACHER_LABEL may contain only letters, numbers, and hyphens" >&2
   exit 2
 fi
 if (( SHARD_COUNT < 1 || WORKER_COUNT < 1 || WORKER_INDEX < 0 || WORKER_INDEX >= WORKER_COUNT )); then
@@ -37,7 +42,7 @@ run_shard() {
   input_path="$WORK_DIRECTORY/input/${shard_name}.epd"
   output_path="$WORK_DIRECTORY/output/${shard_name}.jsonl.gz"
   log_path="$WORK_DIRECTORY/logs/${shard_name}.log"
-  output_uri="$RUN_PREFIX/raw/$TIER/${shard_name}.jsonl.gz"
+  output_uri="$RUN_PREFIX/raw/$LABEL/${shard_name}.jsonl.gz"
 
   if aws s3 ls "$output_uri" >/dev/null 2>&1; then
     echo "skip existing $output_uri"
@@ -51,11 +56,11 @@ run_shard() {
     --nodes "$NODE_BUDGET" \
     --multipv 8 \
     --progress-every 250 >"$log_path" 2>&1; then
-    aws s3 cp "$log_path" "$RUN_PREFIX/logs/$TIER/worker-${WORKER_INDEX}-${shard_name}.log"
+    aws s3 cp "$log_path" "$RUN_PREFIX/logs/$LABEL/worker-${WORKER_INDEX}-${shard_name}.log"
     return 1
   fi
   aws s3 cp "$output_path" "$output_uri"
-  aws s3 cp "$log_path" "$RUN_PREFIX/logs/$TIER/worker-${WORKER_INDEX}-${shard_name}.log"
+  aws s3 cp "$log_path" "$RUN_PREFIX/logs/$LABEL/worker-${WORKER_INDEX}-${shard_name}.log"
 }
 
 pids=()
@@ -82,9 +87,9 @@ if (( ${#pids[@]} > 0 )); then
 fi
 
 STATUS_PATH="$WORK_DIRECTORY/status.json"
-printf '{"run_id":"%s","tier":"%s","worker_index":%d,"worker_count":%d,"failed":%d}\n' \
-  "$RUN_ID" "$TIER" "$WORKER_INDEX" "$WORKER_COUNT" "$failed" >"$STATUS_PATH"
-aws s3 cp "$STATUS_PATH" "$RUN_PREFIX/status/$TIER/worker-${WORKER_INDEX}.json"
+printf '{"run_id":"%s","tier":"%s","label":"%s","worker_index":%d,"worker_count":%d,"failed":%d}\n' \
+  "$RUN_ID" "$TIER" "$LABEL" "$WORKER_INDEX" "$WORKER_COUNT" "$failed" >"$STATUS_PATH"
+aws s3 cp "$STATUS_PATH" "$RUN_PREFIX/status/$LABEL/worker-${WORKER_INDEX}.json"
 if [[ "${TEACHER_SHUTDOWN:-1}" == "1" ]]; then
   sudo shutdown -h +1
 fi
