@@ -88,6 +88,34 @@ Resources:
             - !Join ["", ["user:Project$", !Ref ProjectName]]
         TimeUnit: MONTHLY
 
+  BudgetAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-budget-actions"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: ManagedBy
+          Value: cloudformation
+
+  BudgetAlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref BudgetAlertsTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowBudgetsToPublish
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetAlertsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
   BudgetActionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -433,6 +461,8 @@ Outputs:
     Value: !Sub "${ProjectName}-monthly-emergency-stop"
   BudgetActionRoleArn:
     Value: !GetAtt BudgetActionRole.Arn
+  BudgetAlertsTopicArn:
+    Value: !Ref BudgetAlertsTopic
   SpendReservationsTableName:
     Description: Atomic worst-case launch reservations enforcing the local hard ceiling
     Value: !Ref SpendReservations

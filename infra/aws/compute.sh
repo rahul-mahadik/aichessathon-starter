@@ -88,10 +88,11 @@ release_launch_budget() {
 }
 
 register_hard_stop_action() {
-  local account_id budget_name role_arn ids definition action_id
+  local account_id budget_name role_arn topic_arn ids definition action_id
   account_id="$(aws_project sts get-caller-identity --query Account --output text)"
   budget_name="$(stack_output HardBudgetName)"
   role_arn="$(stack_output BudgetActionRoleArn)"
+  topic_arn="$(stack_output BudgetAlertsTopicArn)"
   ids="$(aws_project ec2 describe-instances \
     --filters "Name=tag:Project,Values=$PROJECT_NAME" \
       Name=instance-state-name,Values=pending,running \
@@ -113,7 +114,8 @@ register_hard_stop_action() {
       --action-threshold ActionThresholdValue=100,ActionThresholdType=PERCENTAGE \
       --definition "$definition" \
       --execution-role-arn "$role_arn" \
-      --approval-model AUTOMATIC >/dev/null
+      --approval-model AUTOMATIC \
+      --subscribers "SubscriptionType=SNS,Address=$topic_arn" >/dev/null
     echo "Registered automatic \$$(stack_output HardBudgetLimit) EC2 stop action."
   else
     aws_project budgets update-budget-action \
@@ -124,7 +126,8 @@ register_hard_stop_action() {
       --action-threshold ActionThresholdValue=100,ActionThresholdType=PERCENTAGE \
       --definition "$definition" \
       --execution-role-arn "$role_arn" \
-      --approval-model AUTOMATIC >/dev/null
+      --approval-model AUTOMATIC \
+      --subscribers "SubscriptionType=SNS,Address=$topic_arn" >/dev/null
     echo "Updated automatic emergency stop action for active project instances."
   fi
 }
