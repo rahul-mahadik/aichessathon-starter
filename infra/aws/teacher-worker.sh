@@ -85,5 +85,7 @@ STATUS_PATH="$WORK_DIRECTORY/status.json"
 printf '{"run_id":"%s","tier":"%s","worker_index":%d,"worker_count":%d,"failed":%d}\n' \
   "$RUN_ID" "$TIER" "$WORKER_INDEX" "$WORKER_COUNT" "$failed" >"$STATUS_PATH"
 aws s3 cp "$STATUS_PATH" "$RUN_PREFIX/status/$TIER/worker-${WORKER_INDEX}.json"
-sudo shutdown -h +1
+if [[ "${TEACHER_SHUTDOWN:-1}" == "1" ]]; then
+  sudo shutdown -h +1
+fi
 exit "$failed"
