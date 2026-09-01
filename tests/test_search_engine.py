@@ -28,6 +28,14 @@ class SearchEngineTests(unittest.TestCase):
         result = SearchEngine().choose(board, 100)
         self.assertEqual(result.move, legal[0])
 
+    def test_fixed_node_search_is_bounded_and_restores_board(self) -> None:
+        board = chess.Board()
+        original = board.fen()
+        result = SearchEngine().choose_fixed_nodes(board, 1_000)
+        self.assertIn(result.move, board.legal_moves)
+        self.assertEqual(result.nodes, 1_000)
+        self.assertEqual(board.fen(), original)
+
 
 if __name__ == "__main__":
     unittest.main()

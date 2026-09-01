@@ -30,16 +30,23 @@ def play_match(
     increment_ms: int,
     ply_cap: int = PLY_CAP,
     start_fen: str = chess.STARTING_FEN,
+    enforce_clock: bool = True,
 ) -> Outcome:
     try:
-        return _play(white, black, base_ms, increment_ms, ply_cap, start_fen)
+        return _play(white, black, base_ms, increment_ms, ply_cap, start_fen, enforce_clock)
     finally:
         white.stop()
         black.stop()
 
 
 def _play(
-    white: Agent, black: Agent, base_ms: int, increment_ms: int, ply_cap: int, start_fen: str
+    white: Agent,
+    black: Agent,
+    base_ms: int,
+    increment_ms: int,
+    ply_cap: int,
+    start_fen: str,
+    enforce_clock: bool,
 ) -> Outcome:
     board = chess.Board(start_fen)
     agents = {chess.WHITE: white, chess.BLACK: black}
@@ -64,19 +71,22 @@ def _play(
 
         mover = board.turn
         started_at = time.monotonic()
+        move_budget_ms = int(clock[mover]) if enforce_clock else 86_400_000
         try:
-            uci = agents[mover].move(board.fen(), int(clock[mover]))
+            uci = agents[mover].move(board.fen(), move_budget_ms)
         except AgentFailure as failure:
             return _outcome(board, _opponent_wins(mover), failure.reason)
-        clock[mover] -= (time.monotonic() - started_at) * 1000.0
-        if clock[mover] < 0:
-            return _outcome(board, _opponent_wins(mover), "flag")
+        if enforce_clock:
+            clock[mover] -= (time.monotonic() - started_at) * 1000.0
+            if clock[mover] < 0:
+                return _outcome(board, _opponent_wins(mover), "flag")
 
         move = _legal_move(board, uci)
         if move is None:
             return _outcome(board, _opponent_wins(mover), "illegal")
         board.push(move)
-        clock[mover] += increment_ms
+        if enforce_clock:
+            clock[mover] += increment_ms
 
 
 def _start(agent: Agent) -> str | None:

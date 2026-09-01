@@ -49,6 +49,7 @@ class GameSpec:
     base_ms: int
     increment_ms: int
     ply_cap: int
+    fixed_nodes: int | None
 
 
 def load_positions(path: Path) -> list[Position]:
@@ -127,6 +128,7 @@ def play_game(spec: GameSpec) -> GameRecord:
         spec.increment_ms,
         ply_cap=spec.ply_cap,
         start_fen=spec.position.fen,
+        enforce_clock=spec.fixed_nodes is None,
     )
     return GameRecord(
         round=spec.round,
@@ -143,6 +145,10 @@ def play_game(spec: GameSpec) -> GameRecord:
 def run(arguments: argparse.Namespace) -> dict[str, Any]:
     candidate = arguments.agent.resolve()
     opponent = arguments.opponent.resolve()
+    if arguments.fixed_nodes is not None:
+        os.environ["AICHESSATHON_FIXED_NODES"] = str(arguments.fixed_nodes)
+    else:
+        os.environ.pop("AICHESSATHON_FIXED_NODES", None)
     positions = load_positions(arguments.positions)
     specs = [
         GameSpec(
@@ -154,6 +160,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             base_ms=arguments.base_ms,
             increment_ms=arguments.increment_ms,
             ply_cap=arguments.ply_cap,
+            fixed_nodes=arguments.fixed_nodes,
         )
         for round_number in range(1, arguments.rounds + 1)
         for position in positions
@@ -204,6 +211,8 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             "base_ms": arguments.base_ms,
             "increment_ms": arguments.increment_ms,
             "ply_cap": arguments.ply_cap,
+            "fixed_nodes": arguments.fixed_nodes,
+            "clock_enforced": arguments.fixed_nodes is None,
             "workers": arguments.workers,
         },
         "summary": {
@@ -233,11 +242,14 @@ def main() -> None:
     parser.add_argument("--base-ms", type=int, default=10_000)
     parser.add_argument("--increment-ms", type=int, default=100)
     parser.add_argument("--ply-cap", type=int, default=PLY_CAP)
+    parser.add_argument("--fixed-nodes", type=int)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--output", type=Path, default=Path("benchmark-results/latest.json"))
     arguments = parser.parse_args()
     if arguments.rounds < 1 or arguments.workers < 1:
         parser.error("--rounds and --workers must be positive")
+    if arguments.fixed_nodes is not None and arguments.fixed_nodes < 1:
+        parser.error("--fixed-nodes must be positive")
 
     for variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         os.environ.setdefault(variable, "1")

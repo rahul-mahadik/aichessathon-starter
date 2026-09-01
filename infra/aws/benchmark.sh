@@ -8,6 +8,7 @@ fi
 WORKERS="${BENCH_WORKERS:-1}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 BASE_MS="${BENCH_BASE_MS:-10000}"
+FIXED_NODES="${BENCH_FIXED_NODES:-}"
 AGENT="${BENCH_AGENT:-.}"
 OPPONENT="${BENCH_OPPONENT:-baselines/minimax}"
 OUTPUT="${BENCH_OUTPUT:-benchmark-results/aws-$(date -u +%Y%m%dT%H%M%SZ).json}"
@@ -34,13 +35,19 @@ if [[ -n "$TOKEN" ]]; then
 fi
 
 "$UV_BIN" sync --frozen --python 3.12
+EXTRA_ARGUMENTS=()
+if [[ -n "$FIXED_NODES" ]]; then
+  EXTRA_ARGUMENTS+=(--fixed-nodes "$FIXED_NODES")
+fi
+
 "$UV_BIN" run python -m benchmarks.run \
   --agent "$AGENT" \
   --opponent "$OPPONENT" \
   --rounds "$ROUNDS" \
   --base-ms "$BASE_MS" \
   --workers "$WORKERS" \
-  --output "$OUTPUT"
+  --output "$OUTPUT" \
+  "${EXTRA_ARGUMENTS[@]}"
 
 if [[ -n "${AICHESSATHON_ARTIFACTS_URI:-}" ]]; then
   aws s3 cp "$OUTPUT" "${AICHESSATHON_ARTIFACTS_URI%/}/benchmarks/$(basename "$OUTPUT")"

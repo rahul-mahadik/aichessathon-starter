@@ -1,6 +1,7 @@
 """Search-distilled AI Chessathon submission entrypoint."""
 
 import json
+import os
 from pathlib import Path
 
 import chess
@@ -20,6 +21,10 @@ if _WEIGHTS.exists():
     _search = SearchEngine(_learned)
 else:
     _search = SearchEngine(handcrafted_evaluation)
+
+_FIXED_NODES = int(os.environ.get("AICHESSATHON_FIXED_NODES", "0"))
+if _FIXED_NODES < 0:
+    raise ValueError("AICHESSATHON_FIXED_NODES must be non-negative")
 
 _game_board: chess.Board | None = None
 
@@ -45,7 +50,11 @@ def _synchronize(fen: str) -> chess.Board:
 def get_move(fen: str, time_left_ms: int) -> str:
     """Return the last move from a completed iterative-deepening iteration."""
     board = _synchronize(fen)
-    result = _search.choose(board, time_left_ms)
+    result = (
+        _search.choose_fixed_nodes(board, _FIXED_NODES)
+        if _FIXED_NODES
+        else _search.choose(board, time_left_ms)
+    )
     board.push(result.move)
     print(
         f"depth={result.depth} score={result.score:.0f} "

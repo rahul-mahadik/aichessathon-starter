@@ -102,6 +102,7 @@ class SearchEngine:
         self.history: dict[tuple[bool, int, int], int] = {}
         self.killers: list[list[chess.Move]] = [[] for _ in range(128)]
         self.deadline = 0.0
+        self.node_limit: int | None = None
         self.nodes = 0
 
     @staticmethod
@@ -109,6 +110,10 @@ class SearchEngine:
         return chess.polyglot.zobrist_hash(board) ^ (min(board.halfmove_clock, 127) << 64)
 
     def _check_time(self) -> None:
+        if self.node_limit is not None:
+            if self.nodes >= self.node_limit:
+                raise SearchTimeout
+            return
         if self.nodes & 127 == 0 and time.monotonic() >= self.deadline:
             raise SearchTimeout
 
@@ -284,15 +289,21 @@ class SearchEngine:
         target = int(time_left_ms / 40 + 300)
         return max(60, min(5_000, int(time_left_ms * 0.15), target))
 
-    def choose(self, board: chess.Board, time_left_ms: int) -> SearchResult:
+    def _choose(
+        self, board: chess.Board, *, budget_ms: int | None, node_limit: int | None
+    ) -> SearchResult:
         moves = list(board.legal_moves)
         if not moves:
             raise ValueError("cannot choose a move in a terminal position")
         if len(self.table) > MAX_TABLE_ENTRIES:
             self.table.clear()
         started = time.monotonic()
-        budget_ms = self._budget_ms(time_left_ms)
-        self.deadline = started + max(budget_ms - 10, 5) / 1_000.0
+        self.node_limit = node_limit
+        self.deadline = (
+            float("inf")
+            if budget_ms is None
+            else started + max(budget_ms - 10, 5) / 1_000.0
+        )
         self.nodes = 0
         best_move = moves[0]
         best_score = -INFINITY
@@ -309,3 +320,15 @@ class SearchEngine:
                 break
         elapsed_ms = int((time.monotonic() - started) * 1_000)
         return SearchResult(best_move, best_score, completed_depth, self.nodes, elapsed_ms)
+
+    def choose(self, board: chess.Board, time_left_ms: int) -> SearchResult:
+        return self._choose(
+            board,
+            budget_ms=self._budget_ms(time_left_ms),
+            node_limit=None,
+        )
+
+    def choose_fixed_nodes(self, board: chess.Board, node_limit: int) -> SearchResult:
+        if node_limit < 1:
+            raise ValueError("node_limit must be positive")
+        return self._choose(board, budget_ms=None, node_limit=node_limit)
