@@ -15,12 +15,14 @@ The wall-clock result is clear: the initial distilled evaluators are not submiss
 combined medium-plus-deep model scored 15.5%. This does **not** establish that distillation failed;
 it measures evaluator knowledge, inference cost, and search interaction together.
 
-Trace diagnostics identified two causes:
+Evaluator and search diagnostics identified three separate effects:
 
 1. The original full-size NN evaluator was about 1.8 times slower locally and completed one fewer
    search ply in the same time budget.
-2. Although it ranked arbitrary candidate pairs better than the fallback, it selected Stockfish's
-   top candidate less often.
+2. On a fresh feature-disjoint holdout, every student ranked arbitrary candidate pairs better than
+   the fallback, but every student selected Stockfish's exact top candidate less often.
+3. The current students also lose when both engines receive exactly the same number of search
+   nodes, so inference speed is not the only problem.
 
 A second controlled experiment therefore added an explicit top-move objective and trained a model
 with a smaller accumulator. The new `fast-top` model is 1.18 MB, matches or slightly exceeds the
@@ -33,19 +35,21 @@ Turn-flip diagnostics then found a negamax integration violation: the learned ev
 enforce antisymmetry when mover and opponent inputs swapped. On 5,000 positions, `fast-top` had a
 mean `|v + v_flipped|` of 0.269 on a -1 to 1 scale, and 18.0% of pairs retained the same sign. An
 optimized inference mode now reuses the sparse accumulator and antisymmetrizes only the dense head.
-It retains search depth 4, scores 35.48% on the same mixed trace diagnostic, and is awaiting a
-wall-clock paired game test as `fast-top-antisym`.
+It retains search depth 4 and improved the wall-clock score from 15.2% to 22.2%, but it still loses
+decisively to the fallback.
 
-Current deployment leader: **handcrafted fallback**. Pure distillation and fixed-node search
-leaders remain undetermined until the experiments below finish.
+Current deployment and fixed-node leader: **handcrafted fallback**. The pure evaluator result is
+mixed but positive: `combined` is the best student on value error, `fast-top` is the best on broad
+pairwise ordering, and the fallback remains best on exact top-move agreement. The weights therefore
+contain real Stockfish signal, but not yet in a form that improves alpha-beta move choice.
 
 ## Evaluation framework
 
 | Test | Control | Question | Current state |
 |---|---|---|---|
-| Pure evaluator | No search or time limit; genuinely unseen deep labels | Did the student learn Stockfish values and move ordering? | Fresh holdout pending |
-| Fixed-search | Same nodes per move; clocks disabled | Does the student improve the same search tree budget? | 1k/10k/100k harness ready |
-| Tournament | Same wall clock and CPU | Does the complete engine win under competition constraints? | Initial results complete; diagnostics running |
+| Pure evaluator | No search or time limit; genuinely unseen deep labels | Did the student learn Stockfish values and move ordering? | Complete on 2,000 positions |
+| Fixed-search | Same nodes per move; clocks disabled | Does the student improve the same search tree budget? | First 1k/10k/100k sweep complete |
+| Tournament | Same wall clock and CPU | Does the complete engine win under competition constraints? | Complete for current variants |
 
 ## Data and teacher traces
 
@@ -74,6 +78,7 @@ Durable artifacts:
 - Reusable datasets: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/pilot-20260831a/dataset/`
 - Models: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/pilot-20260831a/models/`
 - Benchmarks: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/pilot-20260831a/benchmarks/`
+- Unseen evaluator holdout and results: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/eval-20260901a/`
 
 ## Training and diagnostic metrics
 
@@ -82,7 +87,7 @@ Durable artifacts:
 | `medium` | 100k medium | 128/64/32 | 4.63 MB | 59.42% | not recorded | not measured | Rejected for wall clock |
 | `combined` | 100k medium + 10k deep | 128/64/32 | 4.56 MB | 60.39% | not recorded | 31.51% | Rejected for wall clock |
 | `fast-top` | 100k medium | 32/32/16 | 1.18 MB | 60.43% | 31.82% | 38.30% | Rejected for wall clock |
-| `fast-top-antisym` | existing `fast-top` weights | 32/32/16 | 1.18 MB | n/a | n/a | 35.48% | Tournament pending |
+| `fast-top-antisym` | existing `fast-top` weights | 32/32/16 | 1.18 MB | n/a | n/a | 35.48% | Better than direct mode, still rejected |
 | `full-top` | 100k medium | 128/64/32 | 4.91 MB | 60.32% | 30.81% | 38.51% | Rejected for wall clock |
 
 The 12,500-position diagnostic used retained medium-tier records containing 94,491 Stockfish
@@ -93,12 +98,29 @@ with 50.66% for the handcrafted evaluator.
 
 ## Pure evaluator test
 
-A fresh, deduplicated position holdout with deep Stockfish labels will be stored separately from
-all training data. For each model and the handcrafted fallback, the report will include root-value
-MSE/MAE, candidate-value MSE/MAE, pairwise ranking accuracy, and top-move agreement. Runtime is not
-a promotion criterion in this section.
+A fresh holdout was sampled deterministically from the pinned Gigafish revision after excluding all
+110,000 training positions at the evaluator's feature level: piece placement plus side to move.
+This is stricter than exact-FEN exclusion because positions that differ only in counters or other
+state invisible to the model are also removed. The holdout contains 2,000 unique positions and
+15,048 legal candidate lines, all labeled by Stockfish at 1,000,000 nodes with MultiPV 8. Runtime
+is not a criterion in this experiment.
 
-Status: **pending fresh holdout generation and evaluation**.
+| Evaluator | Root MSE | Root MAE | Candidate MSE | Candidate MAE | Pairwise accuracy | Top-move agreement |
+|---|---:|---:|---:|---:|---:|---:|
+| Handcrafted fallback | 0.3856 | 0.4969 | 0.3803 | 0.4954 | 51.89% | **34.00%** |
+| `medium` | 0.3922 | 0.4506 | 0.3834 | 0.4419 | 61.17% | 29.55% |
+| `combined` | **0.3804** | **0.4382** | **0.3747** | **0.4308** | 60.66% | 28.05% |
+| `fast-top` | 0.3831 | 0.4551 | 0.3851 | 0.4459 | **62.00%** | 29.50% |
+| `full-top` | 0.3988 | 0.4734 | 0.3956 | 0.4678 | 61.52% | 30.55% |
+| `fast-top-antisym` | 0.3877 | 0.4664 | 0.3830 | 0.4608 | 60.86% | 28.85% |
+
+This establishes **partial distillation success** independent of runtime. All students improve
+pairwise ordering by 8.8 to 10.1 percentage points and reduce absolute value error. `combined` also
+improves both root and candidate MSE. However, every student loses 3.5 to 6.0 percentage points of
+exact top-move agreement. The students have learned the teacher's broad value landscape, but the
+loss and representation do not concentrate that knowledge strongly enough on the best move.
+
+### Runtime diagnostic (not part of the pure evaluator test)
 
 Local throughput sample on 20,000 evaluations:
 
@@ -117,15 +139,18 @@ The benchmark harness now supports an exact per-move node cap, disables chess-cl
 uses a 24-hour per-move watchdog only for crash containment. Candidate and control use the same
 search implementation and node ceiling.
 
-| Candidate vs fallback | 1k nodes | 10k nodes | 100k nodes |
+| Candidate vs fallback | 1k nodes (320 games) | 10k nodes (80 games) | 100k nodes (16 games) |
 |---|---:|---:|---:|
-| `medium` | pending | pending | pending |
-| `combined` | pending | pending | pending |
-| `fast-top` | pending | pending | pending |
+| `medium` | 12.50% / -338 Elo | 15.63% / -293 Elo | 15.63% / -293 Elo |
+| `combined` | 15.63% / -293 Elo | 3.13% / -597 Elo | 9.38% / -394 Elo |
+| `fast-top` | 18.75% / -255 Elo | 0.00% / unbounded | 12.50% / -338 Elo |
 
 The first sweep uses more games at cheap node budgets and fewer games at 100k, then expands any
-promising cell. This is the experiment that tests whether search compute was amortized into the
-weights.
+promising cell. All nine cells disabled clock enforcement, used the same node ceiling on both
+sides, and had zero failed terminations. The 100k cells are directional because they contain only
+16 games. No current student shows evidence that search compute was successfully amortized into
+the weights; the degradation at 10k also points to a depth/search interaction that deserves direct
+analysis.
 
 ## Wall-clock tournament test
 
@@ -139,8 +164,8 @@ Every completed comparison used 20 rounds over eight openings with both colors, 
 | `combined` | `medium` | 81-132-107 | 45.94% | -28 | 41.76%-50.12% | No wall-clock gain from deep labels |
 | `fast-top` | fallback | 38-21-261 | 15.16% | -299 | 11.48%-18.83% | Reject |
 | `full-top` | fallback | 16-27-277 | 9.22% | -397 | 6.47%-11.96% | Reject |
-| `fast-top` | `full-top` | in progress | — | — | — | Speed/loss diagnostic |
-| `fast-top-antisym` | fallback | pending | — | — | — | Negamax integration test |
+| `fast-top` | `full-top` | 129-114-77 | 58.13% | +57 | 53.81%-62.44% | Smaller model wins |
+| `fast-top-antisym` | fallback | 35-72-213 | 22.19% | -218 | 18.44%-25.93% | Better, still reject |
 
 The first three benchmark reports were generated from independently verified commit `3de6dfe`.
 Their embedded Git field is `unknown` because SSM ran as root against an `ec2-user` checkout. This
@@ -157,11 +182,20 @@ model SHA-256 hashes.
 - Teacher generation used one `c7i.2xlarge` Spot worker.
 - Training used short `g6.xlarge` and `g5.xlarge` on-demand sessions.
 - Benchmarks use disposable `c7i.2xlarge` workers and terminate after reports are retained.
-- No GPU is active. Two on-demand CPU workers are finishing wall-clock diagnostics.
+- The holdout labeler and all project GPU and benchmark workers are terminated. No project EC2
+  compute is active.
+- Two untagged stopped instances created in April, each with an attached 16 GB `gp3` volume, remain
+  in the account. They predate this project and were not modified.
 
-The manual project ledger is currently below approximately `$2`, excluding negligible S3 request
-and storage charges. This is an engineering estimate from instance lifetimes, not an AWS billing
-statement. A final amount will be recorded after the active benchmarks terminate.
+Project-tagged instance lifecycle events give a conservative engineering estimate below
+approximately `$20`, excluding negligible S3 request and storage charges. Recent usage has not yet
+posted in Cost Explorer, so this is not a billing statement.
+
+**Account-level budget warning:** the `$200` budget currently reports `$0` September actual spend
+but a `$265.31` forecast. Cost Explorer reports approximately `$252.74` account-wide for August,
+including `$243.96` of EC2 compute, `$5.08` of EC2 Other, and `$3.70` of VPC charges. Those totals
+are not isolated to the chessathon tags. The budget is therefore useful as an account alarm, but it
+cannot prove project spend or enforce the intended project-only cap.
 
 ## Repository work completed
 
@@ -174,16 +208,21 @@ statement. A final amount will be recorded after the active benchmarks terminate
 - Stable validation splitting and best-checkpoint export.
 - Top-move-aware training objective and trace-level evaluator comparison.
 - Paired, color-swapped benchmark reports with confidence intervals and Elo estimates.
+- Clock-free, exact-node benchmark mode and a complete first 1k/10k/100k sweep.
+- Feature-level holdout exclusion and a separate 2,000-position, deep-labeled evaluator corpus.
 - Benchmark provenance including Git revision and model hashes.
 
 ## Decision gate and next work
 
-Do not decide whether distillation or the deeper labels worked from the wall-clock matches. First:
+The three experiments now support a narrower diagnosis:
 
-1. Generate and evaluate the genuinely unseen deep-labeled holdout.
-2. Fill the 1k/10k/100k fixed-node matrix.
-3. Compare the fixed-node curve with the wall-clock curve to separate evaluator quality from
-   inference cost and search interaction.
+1. Distillation learned broad Stockfish value and ordering signal on unseen positions.
+2. That signal does not improve the current alpha-beta engine at an equal node count.
+3. Inference speed compounds the problem for the larger networks under a wall clock, but it is not
+   the primary explanation because the students already lose the fixed-node test.
 
-Only then decide whether to scale teacher data, redesign the evaluator, or focus on deployment
-speed. The handcrafted evaluator remains the submission default in the meantime.
+The next experiment should target the evaluator-search boundary rather than immediately buy more
+labels: train side-to-move antisymmetry into the loss, weight the best few candidates more heavily,
+and test shallow tactical/quiet subsets at fixed depth and fixed nodes. Scale data only after one of
+those changes improves exact top-move agreement and at least one fixed-node cell. The handcrafted
+evaluator remains the submission default in the meantime.
