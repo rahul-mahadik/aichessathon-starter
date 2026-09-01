@@ -148,7 +148,10 @@ def synthetic_shard(path: Path, records: int, seed: int) -> Path:
 
 
 def losses(
-    predictions: torch.Tensor, batch: Batch, ranking_weight: float
+    predictions: torch.Tensor,
+    batch: Batch,
+    ranking_weight: float,
+    top_move_weight: float,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     value_errors = (predictions - batch["targets"])[batch["value_mask"]]
     value_loss = torch.mean(value_errors.square())
@@ -167,17 +170,29 @@ def losses(
     else:
         ranking_loss = predictions.new_zeros(())
         ranking_accuracy = 0.0
-    total = value_loss + ranking_weight * ranking_loss
+
+    top_move_logits = 4.0 * predicted_q.masked_fill(~batch["candidate_mask"], -1e4)
+    top_move_targets = torch.zeros(
+        top_move_logits.shape[0], dtype=torch.long, device=top_move_logits.device
+    )
+    top_move_loss = functional.cross_entropy(top_move_logits, top_move_targets)
+    top_move_accuracy = torch.mean((top_move_logits.argmax(dim=1) == 0).float()).item()
+    total = value_loss + ranking_weight * ranking_loss + top_move_weight * top_move_loss
     return total, {
         "value_mse": float(value_loss.detach()),
         "ranking_loss": float(ranking_loss.detach()),
         "ranking_accuracy": ranking_accuracy,
+        "top_move_loss": float(top_move_loss.detach()),
+        "top_move_accuracy": top_move_accuracy,
         "value_mae": float(value_errors.abs().mean().detach()),
     }
 
 
 def evaluate(
-    model: SparseValueNetwork, batches: Iterator[Batch], ranking_weight: float
+    model: SparseValueNetwork,
+    batches: Iterator[Batch],
+    ranking_weight: float,
+    top_move_weight: float,
 ) -> dict[str, float]:
     totals: dict[str, float] = {}
     count = 0
@@ -185,7 +200,7 @@ def evaluate(
     with torch.inference_mode():
         for batch in batches:
             predictions = model(batch["features"], batch["turns"])
-            loss, metrics = losses(predictions, batch, ranking_weight)
+            loss, metrics = losses(predictions, batch, ranking_weight, top_move_weight)
             metrics["total_loss"] = float(loss.detach())
             for name, value in metrics.items():
                 totals[name] = totals.get(name, 0.0) + value
@@ -202,6 +217,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--ranking-weight", type=float, default=0.25)
+    parser.add_argument("--top-move-weight", type=float, default=0.25)
     parser.add_argument("--accumulator", type=int, default=128)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--bottleneck", type=int, default=32)
@@ -210,6 +226,8 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.epochs < 1 or arguments.batch_size < 1:
         parser.error("--epochs and --batch-size must be positive")
+    if arguments.ranking_weight < 0 or arguments.top_move_weight < 0:
+        parser.error("loss weights must be non-negative")
 
     random.seed(arguments.seed)
     np.random.seed(arguments.seed)
@@ -259,7 +277,12 @@ def main() -> None:
         for batch in batches:
             optimizer.zero_grad(set_to_none=True)
             predictions = model(batch["features"], batch["turns"])
-            loss, _ = losses(predictions, batch, arguments.ranking_weight)
+            loss, _ = losses(
+                predictions,
+                batch,
+                arguments.ranking_weight,
+                arguments.top_move_weight,
+            )
             loss.backward()
             optimizer.step()
             training_loss += float(loss.detach())
@@ -275,6 +298,7 @@ def main() -> None:
                 validation=True,
             ),
             arguments.ranking_weight,
+            arguments.top_move_weight,
         )
         if last_validation["total_loss"] < best_validation_loss:
             best_validation_loss = last_validation["total_loss"]
@@ -302,6 +326,11 @@ def main() -> None:
         metadata={
             "device": device,
             "epochs": arguments.epochs,
+            "batch_size": arguments.batch_size,
+            "learning_rate": arguments.learning_rate,
+            "ranking_weight": arguments.ranking_weight,
+            "top_move_weight": arguments.top_move_weight,
+            "seed": arguments.seed,
             "best_epoch": best_epoch,
             "best_validation_loss": best_validation_loss,
             **best_validation,

@@ -127,6 +127,23 @@ DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined DISTILL_EXPECTED_RECORDS=11
   bash infra/aws/distill-gpu-run.sh --epochs 10 --batch-size 1024
 ```
 
+Reuse a previously built dataset when iterating on the model or loss, avoiding another raw-data
+download and conversion pass:
+
+```bash
+DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=fast-top \
+DISTILL_REUSE_DATASET_MODEL=medium DISTILL_EXPECTED_RECORDS=100000 \
+  bash infra/aws/distill-gpu-run.sh --epochs 15 --batch-size 1024 \
+    --accumulator 32 --hidden 32 --bottleneck 16 --top-move-weight 0.25
+```
+
+Compare an exported model and the handcrafted evaluator against retained teacher traces:
+
+```bash
+uv run python -m distill.compare_evaluators raw/part-00000.jsonl.gz \
+  --model weights/nnue.npz --output evaluator-comparison.json
+```
+
 After training, compare the learned evaluator to the identical search using the handcrafted
 fallback. Colours are paired for every opening and the report is retained with the run:
 

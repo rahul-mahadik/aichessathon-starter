@@ -4,6 +4,7 @@ set -euo pipefail
 RUN_ID="${DISTILL_RUN_ID:?DISTILL_RUN_ID is required}"
 MODEL_NAME="${DISTILL_MODEL_NAME:-combined}"
 TIERS="${DISTILL_TIERS:-medium deep}"
+REUSE_DATASET_MODEL="${DISTILL_REUSE_DATASET_MODEL:-}"
 EXPECTED_RECORDS="${DISTILL_EXPECTED_RECORDS:?DISTILL_EXPECTED_RECORDS is required}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 PYTORCH_PYTHON="${PYTORCH_PYTHON:-/opt/pytorch/bin/python}"
@@ -27,35 +28,48 @@ if [[ ! -d "$TRAINING_DEPS/chess" ]]; then
 fi
 export PYTHONPATH="$PWD/$TRAINING_DEPS${PYTHONPATH:+:$PYTHONPATH}"
 
-for tier in $TIERS; do
-  case "$tier" in
-    medium|deep) ;;
-    *) echo "DISTILL_TIERS contains unsupported tier: $tier" >&2; exit 2 ;;
-  esac
-  mkdir -p "$RAW_DIRECTORY/$tier"
-  aws s3 sync "$RUN_PREFIX/raw/$tier/" "$RAW_DIRECTORY/$tier/" \
-    --exclude "*" --include "*.jsonl.gz"
-done
-
-mapfile -t RAW_INPUTS < <(find "$RAW_DIRECTORY" -type f -name '*.jsonl.gz' | sort)
-if (( ${#RAW_INPUTS[@]} == 0 )); then
-  echo "No raw teacher records found for $RUN_ID ($TIERS)" >&2
-  exit 1
-fi
-
 INSPECTION_PATH="$WORK_DIRECTORY/inspection.json"
-"$PYTORCH_PYTHON" -m distill.inspect_teacher \
-  "${RAW_INPUTS[@]}" \
-  --expected-records "$EXPECTED_RECORDS" \
-  --expected-candidates 8 >"$INSPECTION_PATH"
-cat "$INSPECTION_PATH"
-aws s3 cp "$INSPECTION_PATH" "$RUN_PREFIX/dataset/$MODEL_NAME/inspection.json"
+if [[ -n "$REUSE_DATASET_MODEL" ]]; then
+  aws s3 sync "$RUN_PREFIX/dataset/$REUSE_DATASET_MODEL/" "$DATASET_DIRECTORY/"
+  if [[ ! -f "$DATASET_DIRECTORY/dataset.json" ]]; then
+    echo "Reusable dataset $REUSE_DATASET_MODEL has no dataset.json" >&2
+    exit 1
+  fi
+  DATASET_RECORDS="$(jq -r '.records' "$DATASET_DIRECTORY/dataset.json")"
+  if [[ "$DATASET_RECORDS" != "$EXPECTED_RECORDS" ]]; then
+    echo "Reusable dataset has $DATASET_RECORDS records, expected $EXPECTED_RECORDS" >&2
+    exit 1
+  fi
+else
+  for tier in $TIERS; do
+    case "$tier" in
+      medium|deep) ;;
+      *) echo "DISTILL_TIERS contains unsupported tier: $tier" >&2; exit 2 ;;
+    esac
+    mkdir -p "$RAW_DIRECTORY/$tier"
+    aws s3 sync "$RUN_PREFIX/raw/$tier/" "$RAW_DIRECTORY/$tier/" \
+      --exclude "*" --include "*.jsonl.gz"
+  done
 
-"$PYTORCH_PYTHON" -m distill.build_dataset \
-  "${RAW_INPUTS[@]}" \
-  --output "$DATASET_DIRECTORY" \
-  --records-per-shard 10_000
-aws s3 sync "$DATASET_DIRECTORY/" "$RUN_PREFIX/dataset/$MODEL_NAME/"
+  mapfile -t RAW_INPUTS < <(find "$RAW_DIRECTORY" -type f -name '*.jsonl.gz' | sort)
+  if (( ${#RAW_INPUTS[@]} == 0 )); then
+    echo "No raw teacher records found for $RUN_ID ($TIERS)" >&2
+    exit 1
+  fi
+
+  "$PYTORCH_PYTHON" -m distill.inspect_teacher \
+    "${RAW_INPUTS[@]}" \
+    --expected-records "$EXPECTED_RECORDS" \
+    --expected-candidates 8 >"$INSPECTION_PATH"
+  cat "$INSPECTION_PATH"
+  aws s3 cp "$INSPECTION_PATH" "$RUN_PREFIX/dataset/$MODEL_NAME/inspection.json"
+
+  "$PYTORCH_PYTHON" -m distill.build_dataset \
+    "${RAW_INPUTS[@]}" \
+    --output "$DATASET_DIRECTORY" \
+    --records-per-shard 10_000
+  aws s3 sync "$DATASET_DIRECTORY/" "$RUN_PREFIX/dataset/$MODEL_NAME/"
+fi
 
 DISTILL_DATA="$DATASET_DIRECTORY" \
 DISTILL_OUTPUT="$OUTPUT_PATH" \
