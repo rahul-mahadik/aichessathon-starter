@@ -73,6 +73,7 @@ launch() {
   if [[ "$market" == "spot" ]]; then
     instance_id="$(aws_project ec2 run-instances \
       --launch-template "LaunchTemplateId=$template_id,Version=\$Latest" \
+      --instance-initiated-shutdown-behavior terminate \
       --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}' \
       --count 1 --query 'Instances[0].InstanceId' --output text)"
   elif [[ "$market" == "on-demand" ]]; then
@@ -85,7 +86,11 @@ launch() {
   fi
 
   echo "Launched $workload instance: $instance_id ($market)"
-  echo "It will stop automatically after six hours unless you cancel/reschedule shutdown."
+  if [[ "$market" == "spot" ]]; then
+    echo "It will terminate on shutdown or after the six-hour safety window."
+  else
+    echo "It will stop automatically after six hours unless you cancel/reschedule shutdown."
+  fi
   echo "Check readiness with: bash infra/aws/compute.sh status"
   echo "Connect with: bash infra/aws/compute.sh connect $instance_id"
 }
