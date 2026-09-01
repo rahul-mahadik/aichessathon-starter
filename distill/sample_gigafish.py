@@ -62,12 +62,29 @@ def _parquet_rows(paths: list[Path]) -> Iterator[str]:
                     yield fen
 
 
-def _valid_unique_positions(candidates: Iterable[str], required: int) -> list[str]:
+def _feature_position_key(board: chess.Board) -> str:
+    """Identify exactly the placement and turn visible to the sparse evaluator."""
+    return f"{board.board_fen()} {'w' if board.turn == chess.WHITE else 'b'}"
+
+
+def _excluded_feature_positions(paths: list[Path]) -> set[str]:
+    excluded: set[str] = set()
+    for path in paths:
+        for raw_line in path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            board = chess.Board(line.partition(";")[0].strip())
+            excluded.add(_feature_position_key(board))
+    return excluded
+
+
+def _valid_unique_positions(
+    candidates: Iterable[str], required: int, excluded: set[str] | None = None
+) -> list[str]:
     positions: list[str] = []
-    seen: set[str] = set()
+    seen = set(excluded or ())
     for fen in candidates:
-        if fen in seen:
-            continue
         try:
             board = chess.Board(fen)
         except ValueError:
@@ -75,7 +92,10 @@ def _valid_unique_positions(candidates: Iterable[str], required: int) -> list[st
         missing_king = board.king(chess.WHITE) is None or board.king(chess.BLACK) is None
         if board.is_game_over() or missing_king:
             continue
-        seen.add(fen)
+        key = _feature_position_key(board)
+        if key in seen:
+            continue
+        seen.add(key)
         positions.append(board.fen())
         if len(positions) >= required:
             return positions
@@ -124,6 +144,7 @@ def sample_corpus(
     shards_per_tier: int,
     source_shards: list[int],
     seed: int,
+    exclude_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     required = medium_positions + deep_positions
     if required < 2 or min(medium_positions, deep_positions) < 1:
@@ -146,7 +167,8 @@ def sample_corpus(
 
     oversample = max(required + 1_000, int(required * 1.05))
     candidates = reservoir_sample(_parquet_rows(parquet_paths), oversample, seed)
-    positions = _valid_unique_positions(candidates, required)
+    excluded = _excluded_feature_positions(exclude_paths or [])
+    positions = _valid_unique_positions(candidates, required, excluded)
     random.Random(seed + 1).shuffle(positions)
     medium = positions[:medium_positions]
     deep = positions[medium_positions:]
@@ -167,6 +189,8 @@ def sample_corpus(
         "dataset": DATASET_REPOSITORY,
         "dataset_revision": DATASET_REVISION,
         "seed": seed,
+        "excluded_feature_positions": len(excluded),
+        "exclude_paths": [str(path) for path in (exclude_paths or [])],
         "sources": sources,
         "tiers": tiers,
     }
@@ -183,6 +207,13 @@ def main() -> None:
     parser.add_argument("--shards-per-tier", type=int, default=8)
     parser.add_argument("--source-shards", type=int, nargs="+", default=DEFAULT_SOURCE_SHARDS)
     parser.add_argument("--seed", type=int, default=20260831)
+    parser.add_argument(
+        "--exclude",
+        type=Path,
+        nargs="*",
+        default=[],
+        help="EPD/FEN files whose evaluator-visible positions must not enter the sample",
+    )
     arguments = parser.parse_args()
     manifest = sample_corpus(
         output=arguments.output,
@@ -192,6 +223,7 @@ def main() -> None:
         shards_per_tier=arguments.shards_per_tier,
         source_shards=arguments.source_shards,
         seed=arguments.seed,
+        exclude_paths=arguments.exclude,
     )
     print(json.dumps(manifest, indent=2))
 

@@ -10,7 +10,7 @@ import torch
 
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
 from distill.inspect_teacher import inspect
-from distill.sample_gigafish import reservoir_sample
+from distill.sample_gigafish import _valid_unique_positions, reservoir_sample
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
 from training.nnue import SparseValueNetwork, export_quantized
@@ -24,6 +24,19 @@ class DistillationTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(first), 10)
         self.assertEqual(len(set(first)), 10)
+
+    def test_corpus_exclusion_uses_evaluator_visible_position(self) -> None:
+        starting = chess.Board()
+        excluded = {f"{starting.board_fen()} w"}
+        same_features = starting.copy()
+        same_features.halfmove_clock = 12
+        same_features.fullmove_number = 42
+        alternative = starting.copy()
+        alternative.push_uci("e2e4")
+        positions = _valid_unique_positions(
+            [same_features.fen(), alternative.fen()], 1, excluded
+        )
+        self.assertEqual(positions, [alternative.fen()])
 
     def record(self) -> TeacherRecord:
         score = TeacherScore(cp=42, mate=None, wdl=(320, 500, 180))
