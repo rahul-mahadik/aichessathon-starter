@@ -78,7 +78,8 @@ def iterate_batches(
         with np.load(shard, allow_pickle=False) as archive:
             arrays = {name: archive[name] for name in archive.files}
         count = len(arrays["features"])
-        shard_seed = seed + zlib.crc32(str(shard.resolve()).encode())
+        shard_identity = f"{shard.parent.name}/{shard.name}"
+        shard_seed = seed + zlib.crc32(shard_identity.encode())
         partition = np.random.default_rng(shard_seed).permutation(count)
         validation_size = max(1, count // 10) if count > 1 else 1
         indices = partition[:validation_size] if validation else partition[validation_size:]
@@ -184,7 +185,8 @@ def evaluate(
     with torch.inference_mode():
         for batch in batches:
             predictions = model(batch["features"], batch["turns"])
-            _, metrics = losses(predictions, batch, ranking_weight)
+            loss, metrics = losses(predictions, batch, ranking_weight)
+            metrics["total_loss"] = float(loss.detach())
             for name, value in metrics.items():
                 totals[name] = totals.get(name, 0.0) + value
             count += 1
@@ -238,6 +240,10 @@ def main() -> None:
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=arguments.learning_rate)
     last_validation: dict[str, float] = {}
+    best_validation_loss = math.inf
+    best_epoch = 0
+    best_state: dict[str, torch.Tensor] | None = None
+    best_validation: dict[str, float] = {}
     for epoch in range(arguments.epochs):
         model.train()
         batches = iterate_batches(
@@ -270,6 +276,13 @@ def main() -> None:
             ),
             arguments.ranking_weight,
         )
+        if last_validation["total_loss"] < best_validation_loss:
+            best_validation_loss = last_validation["total_loss"]
+            best_epoch = epoch + 1
+            best_validation = dict(last_validation)
+            best_state = {
+                name: value.detach().cpu().clone() for name, value in model.state_dict().items()
+            }
         print(
             json.dumps(
                 {
@@ -280,10 +293,19 @@ def main() -> None:
             )
         )
 
+    assert best_state is not None
+    model.load_state_dict(best_state)
+
     report = export_quantized(
         model,
         arguments.output,
-        metadata={"device": device, "epochs": arguments.epochs, **last_validation},
+        metadata={
+            "device": device,
+            "epochs": arguments.epochs,
+            "best_epoch": best_epoch,
+            "best_validation_loss": best_validation_loss,
+            **best_validation,
+        },
     )
     print(json.dumps(report, indent=2))
 
