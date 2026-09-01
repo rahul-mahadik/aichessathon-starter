@@ -55,6 +55,7 @@ deploy() {
       SubnetId="$subnet_id" \
       GitRepositoryUrl="$GIT_REPOSITORY_URL" \
       GitRef="$GIT_REF_NAME" \
+      MonthlyBudgetLimit="${AICHESSATHON_BUDGET_LIMIT:-200}" \
     --tags Project="$PROJECT_NAME" ManagedBy=cloudformation
 
   echo "Artifact URI: $(stack_output ArtifactUri)"

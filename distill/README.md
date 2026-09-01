@@ -39,6 +39,24 @@ TEACHER_LIMIT=8 bash infra/aws/teacher-pilot.sh
 The pinned binary is Stockfish 18 from the project's official GitHub release. The installer exists
 only on offline compute workers and nothing copies the binary into `weights/` or the submission.
 
+## Reproducible Gigafish corpus
+
+The sampler pins Gigafish to revision `47100399529ac17e9fdf2c8d0f49bfae89ae0c30`, samples
+across four separated Parquet shards, validates and deduplicates FENs, and creates disjoint medium
+and deep tiers. Its manifest records source URLs and SHA-256 hashes.
+
+```bash
+uv sync --group teacher
+uv run --group teacher python -m distill.sample_gigafish \
+  --output /tmp/aichessathon-teacher-corpus \
+  --medium-positions 100000 \
+  --deep-positions 10000 \
+  --shards-per-tier 8
+```
+
+The first paid checkpoint is intentionally much smaller than the final target. It proves corpus,
+label, training, and Elo quality before millions of examples are purchased.
+
 ## Create a teacher shard
 
 ```bash

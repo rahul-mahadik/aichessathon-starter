@@ -26,7 +26,9 @@ bash infra/aws/compute.sh outputs
 The CloudFormation stack creates a private versioned artifact bucket, a narrowly scoped EC2 role,
 an outbound-only security group, and CPU/GPU launch templates. It does not launch instances. Both
 templates use encrypted gp3 disks, require IMDSv2, have no inbound ports, and schedule a shutdown
-after six hours on every boot. For an intentionally longer job, run
+after six hours on every boot. It also creates an account-level monthly AWS Budget for visibility;
+the default is $200. AWS Budgets is not a hard stop, so worker count and lifetime remain the actual
+spend controls. For an intentionally longer job, run
 `sudo systemctl disable --now aichessathon-autostop.timer` on that worker and stop it manually.
 
 ## CPU benchmarking
@@ -65,6 +67,16 @@ TEACHER_NODES=100000 TEACHER_MULTIPV=8 TEACHER_LIMIT=8 \
 
 The installer verifies the official Stockfish 18 AVX2 archive checksum. Run the pilot before
 choosing Batch fleet size; scaling estimates should use measured positions/second, not guesses.
+
+For a sharded run, upload a corpus beneath
+`$AICHESSATHON_ARTIFACTS_URI/teacher/runs/RUN_ID/corpus/`, then dispatch one or more Spot CPU
+instances with `teacher-worker.sh`. Each process uses one Stockfish thread; completed output shards
+are immutable and reruns skip them.
+
+```bash
+TEACHER_RUN_ID=pilot-001 TEACHER_TIER=medium TEACHER_NODES=100000 \
+TEACHER_SHARDS=8 TEACHER_PARALLELISM=8 bash infra/aws/teacher-worker.sh
+```
 
 ## GPU training
 
@@ -105,6 +117,14 @@ The primary sparse evaluator uses `train-distilled.sh` instead:
 ```bash
 DISTILL_DATA=training/data/distilled/100k-nodes \
   bash infra/aws/train-distilled.sh --epochs 10 --batch-size 1024
+```
+
+`distill-gpu-run.sh` downloads a named run's raw records, builds reusable NPZ shards, trains, and
+uploads the model under the run-specific S3 prefix:
+
+```bash
+DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined \
+  bash infra/aws/distill-gpu-run.sh --epochs 10 --batch-size 1024
 ```
 
 ## Cost and lifecycle guardrails

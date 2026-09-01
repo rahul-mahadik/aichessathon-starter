@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import random
+import zlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
@@ -73,15 +74,16 @@ def iterate_batches(
 ) -> Iterator[Batch]:
     shard_order = list(shards)
     random.Random(seed + epoch).shuffle(shard_order)
-    for shard_number, shard in enumerate(shard_order):
+    for shard in shard_order:
         with np.load(shard, allow_pickle=False) as archive:
             arrays = {name: archive[name] for name in archive.files}
         count = len(arrays["features"])
-        partition = np.random.default_rng(seed + shard_number).permutation(count)
+        shard_seed = seed + zlib.crc32(str(shard.resolve()).encode())
+        partition = np.random.default_rng(shard_seed).permutation(count)
         validation_size = max(1, count // 10) if count > 1 else 1
         indices = partition[:validation_size] if validation else partition[validation_size:]
         if not validation:
-            np.random.default_rng(seed + epoch + shard_number).shuffle(indices)
+            np.random.default_rng(shard_seed + epoch).shuffle(indices)
         for start in range(0, len(indices), batch_size):
             yield _tensor_batch(arrays, indices[start : start + batch_size], device)
 

@@ -9,12 +9,21 @@ import numpy as np
 import torch
 
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
+from distill.sample_gigafish import reservoir_sample
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
 from training.nnue import SparseValueNetwork, export_quantized
 
 
 class DistillationTests(unittest.TestCase):
+    def test_reservoir_sample_is_bounded_and_deterministic(self) -> None:
+        rows = [str(index) for index in range(100)]
+        first = reservoir_sample(rows, 10, seed=7)
+        second = reservoir_sample(rows, 10, seed=7)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 10)
+        self.assertEqual(len(set(first)), 10)
+
     def record(self) -> TeacherRecord:
         score = TeacherScore(cp=42, mate=None, wdl=(320, 500, 180))
         candidate = Candidate(
@@ -73,4 +82,3 @@ class DistillationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

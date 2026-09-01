@@ -28,8 +28,24 @@ Parameters:
   GitRef:
     Type: String
     Default: codex/environment-setup
+  MonthlyBudgetLimit:
+    Type: Number
+    Default: 200
+    MinValue: 1
+    MaxValue: 10000
 
 Resources:
+  ProjectBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${ProjectName}-monthly-guardrail"
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetLimit
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: MONTHLY
+
   ArtifactsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -331,6 +347,9 @@ Resources:
               Value: cloudformation
 
 Outputs:
+  BudgetName:
+    Description: Account-level monthly visibility guardrail; AWS Budgets does not stop compute
+    Value: !Sub "${ProjectName}-monthly-guardrail"
   ArtifactBucketName:
     Description: Private versioned bucket for datasets, benchmarks, and model artifacts
     Value: !Ref ArtifactsBucket

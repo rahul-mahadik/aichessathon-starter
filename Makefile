@@ -8,7 +8,7 @@ BENCH_BASE_MS ?= 10000
 GPU_IMAGE ?= aichessathon-training:local
 STOCKFISH ?= stockfish
 
-.PHONY: setup play arena bench test distill-smoke distill-e2e-smoke aws-deploy aws-status aws-cpu aws-gpu aws-bench aws-teacher-pilot train-setup train-smoke aws-train aws-train-distilled gpu-build gpu-smoke gpu-train zip gate
+.PHONY: setup play arena bench test distill-smoke distill-e2e-smoke teacher-corpus aws-deploy aws-status aws-cpu aws-gpu aws-bench aws-teacher-pilot train-setup train-smoke aws-train aws-train-distilled gpu-build gpu-smoke gpu-train zip gate
 
 setup:
 	$(UV) sync --python $(PYTHON_VERSION)
@@ -32,6 +32,9 @@ distill-e2e-smoke:
 	$(UV) run python -m distill.annotate --input benchmarks/openings.epd --output /tmp/aichessathon-teacher-smoke.jsonl.gz --stockfish $(STOCKFISH) --nodes 1000 --multipv 4 --limit 2 --keep-pv
 	$(UV) run python -m distill.build_dataset /tmp/aichessathon-teacher-smoke.jsonl.gz --output /tmp/aichessathon-teacher-dataset --records-per-shard 2
 	$(UV) run python -m training.train_distilled --data /tmp/aichessathon-teacher-dataset --device cpu --epochs 1 --batch-size 1 --accumulator 32 --hidden 24 --bottleneck 16 --output /tmp/aichessathon-teacher-model/nnue.npz
+
+teacher-corpus:
+	$(UV) run --group teacher python -m distill.sample_gigafish --output $(or $(OUTPUT),/tmp/aichessathon-teacher-corpus)
 
 aws-deploy:
 	bash infra/aws/compute.sh deploy

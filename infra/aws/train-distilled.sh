@@ -27,8 +27,9 @@ export PYTHONPATH="$PWD/$TRAINING_DEPS${PYTHONPATH:+:$PYTHONPATH}"
   "$@"
 
 if [[ -n "${AICHESSATHON_ARTIFACTS_URI:-}" ]]; then
+  ARTIFACT_PREFIX="${DISTILL_ARTIFACT_PREFIX:-${AICHESSATHON_ARTIFACTS_URI%/}/models}"
   aws s3 cp "$OUTPUT_PATH" \
-    "${AICHESSATHON_ARTIFACTS_URI%/}/models/$(basename "$OUTPUT_PATH")"
+    "${ARTIFACT_PREFIX%/}/$(basename "$OUTPUT_PATH")"
   aws s3 cp "${OUTPUT_PATH%.npz}.json" \
-    "${AICHESSATHON_ARTIFACTS_URI%/}/models/$(basename "${OUTPUT_PATH%.npz}.json")"
+    "${ARTIFACT_PREFIX%/}/$(basename "${OUTPUT_PATH%.npz}.json")"
 fi

@@ -74,6 +74,7 @@ def annotate(
     depth: int | None,
     multipv: int,
     keep_pv: bool,
+    progress_every: int,
 ) -> Iterator[TeacherRecord]:
     limit = chess.engine.Limit(nodes=nodes, depth=depth)
     for index, fen in enumerate(fens, 1):
@@ -91,7 +92,8 @@ def annotate(
             candidates=candidates,
             best_move=candidates[0].move,
         )
-        print(f"annotated {index}: {fen} -> {candidates[0].move}")
+        if index == 1 or index % progress_every == 0:
+            print(f"annotated {index}: {fen} -> {candidates[0].move}")
 
 
 def main() -> None:
@@ -108,9 +110,10 @@ def main() -> None:
     parser.add_argument("--hash-mb", type=int, default=128)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--keep-pv", action="store_true")
+    parser.add_argument("--progress-every", type=int, default=100)
     arguments = parser.parse_args()
-    if arguments.multipv < 1 or arguments.hash_mb < 1:
-        parser.error("--multipv and --hash-mb must be positive")
+    if arguments.multipv < 1 or arguments.hash_mb < 1 or arguments.progress_every < 1:
+        parser.error("--multipv, --hash-mb, and --progress-every must be positive")
 
     with chess.engine.SimpleEngine.popen_uci(arguments.stockfish) as engine:
         options: dict[str, int | bool] = {"Threads": 1, "Hash": arguments.hash_mb}
@@ -128,6 +131,7 @@ def main() -> None:
             depth=arguments.depth,
             multipv=arguments.multipv,
             keep_pv=arguments.keep_pv,
+            progress_every=arguments.progress_every,
         )
         count = write_records(arguments.output, records)
     print(f"wrote {count} records to {arguments.output}")
@@ -135,4 +139,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
