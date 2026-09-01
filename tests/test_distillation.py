@@ -90,6 +90,19 @@ class DistillationTests(unittest.TestCase):
             actual = QuantizedEvaluator(path).raw_value(board)
         self.assertAlmostEqual(actual, expected, delta=0.02)
 
+    def test_antisymmetric_runtime_flips_with_turn(self) -> None:
+        torch.manual_seed(5)
+        model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        board = chess.Board()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nnue.npz"
+            export_quantized(model, path)
+            evaluator = QuantizedEvaluator(path, antisymmetric=True)
+            first = evaluator.raw_value(board)
+            board.turn = not board.turn
+            second = evaluator.raw_value(board)
+        self.assertAlmostEqual(first, -second, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

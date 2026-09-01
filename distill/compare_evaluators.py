@@ -84,8 +84,9 @@ def compare(
     max_records: int | None,
     cp_scale: float,
     ranking_margin: float,
+    antisymmetric: bool,
 ) -> dict[str, object]:
-    learned = QuantizedEvaluator(model_path)
+    learned = QuantizedEvaluator(model_path, antisymmetric=antisymmetric)
     learned.warmup()
     root_learned = ErrorMetrics()
     root_handcrafted = ErrorMetrics()
@@ -128,6 +129,7 @@ def compare(
     return {
         "model": str(model_path),
         "model_sha256": sha256(model_path),
+        "antisymmetric": antisymmetric,
         "inputs": [str(path) for path in inputs],
         "records": records,
         "candidates": candidates,
@@ -153,6 +155,7 @@ def main() -> None:
     parser.add_argument("--max-records", type=int)
     parser.add_argument("--cp-scale", type=float, default=DEFAULT_CP_SCALE)
     parser.add_argument("--ranking-margin", type=float, default=0.02)
+    parser.add_argument("--antisymmetric", action="store_true")
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     if arguments.max_records is not None and arguments.max_records < 1:
@@ -165,6 +168,7 @@ def main() -> None:
         max_records=arguments.max_records,
         cp_scale=arguments.cp_scale,
         ranking_margin=arguments.ranking_margin,
+        antisymmetric=arguments.antisymmetric,
     )
     rendered = json.dumps(report, indent=2) + "\n"
     if arguments.output:

@@ -1,5 +1,6 @@
 """Search-distilled AI Chessathon submission entrypoint."""
 
+import json
 from pathlib import Path
 
 import chess
@@ -8,8 +9,13 @@ from nnue_runtime import QuantizedEvaluator
 from search_engine import SearchEngine, handcrafted_evaluation
 
 _WEIGHTS = Path(__file__).with_name("weights") / "nnue.npz"
+_EVALUATOR_CONFIG = _WEIGHTS.with_name("evaluator.json")
 if _WEIGHTS.exists():
-    _learned = QuantizedEvaluator(_WEIGHTS)
+    _antisymmetric = False
+    if _EVALUATOR_CONFIG.exists():
+        _config = json.loads(_EVALUATOR_CONFIG.read_text())
+        _antisymmetric = bool(_config.get("antisymmetric", False))
+    _learned = QuantizedEvaluator(_WEIGHTS, antisymmetric=_antisymmetric)
     _learned.warmup()
     _search = SearchEngine(_learned)
 else:
