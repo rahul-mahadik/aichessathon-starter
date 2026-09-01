@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
+from distill.inspect_teacher import inspect
 from distill.sample_gigafish import reservoir_sample
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
@@ -50,6 +51,15 @@ class DistillationTests(unittest.TestCase):
             path = Path(directory) / "teacher.jsonl.gz"
             self.assertEqual(write_records(path, [self.record()]), 1)
             self.assertEqual(list(read_records([path])), [self.record()])
+
+    def test_teacher_inspection_validates_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "teacher.jsonl.gz"
+            write_records(path, [self.record()])
+            summary = inspect([path])
+        self.assertEqual(summary["records"], 1)
+        self.assertEqual(summary["candidates_per_record"], 1.0)
+        self.assertEqual(summary["duplicate_fens"], 0)
 
     def test_child_target_flips_perspective(self) -> None:
         group = record_to_group(self.record())

@@ -42,6 +42,13 @@ if (( ${#RAW_INPUTS[@]} == 0 )); then
   exit 1
 fi
 
+INSPECTION_PATH="$WORK_DIRECTORY/inspection.json"
+"$PYTORCH_PYTHON" -m distill.inspect_teacher \
+  "${RAW_INPUTS[@]}" \
+  --expected-candidates 8 >"$INSPECTION_PATH"
+cat "$INSPECTION_PATH"
+aws s3 cp "$INSPECTION_PATH" "$RUN_PREFIX/dataset/$MODEL_NAME/inspection.json"
+
 "$PYTORCH_PYTHON" -m distill.build_dataset \
   "${RAW_INPUTS[@]}" \
   --output "$DATASET_DIRECTORY" \
