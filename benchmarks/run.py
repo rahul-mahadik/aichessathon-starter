@@ -106,6 +106,16 @@ def elo_from_score(score: float) -> float | None:
     return 400.0 * math.log10(score / (1.0 - score))
 
 
+def score_interval(scores: list[float], z_score: float = 1.96) -> tuple[float, float]:
+    """Return a simple normal 95% interval over per-game scores."""
+    mean = sum(scores) / len(scores)
+    if len(scores) < 2:
+        return mean, mean
+    variance = sum((score - mean) ** 2 for score in scores) / (len(scores) - 1)
+    margin = z_score * math.sqrt(variance / len(scores))
+    return max(0.0, mean - margin), min(1.0, mean + margin)
+
+
 def play_game(spec: GameSpec) -> GameRecord:
     white = spec.candidate if spec.candidate_is_white else spec.opponent
     black = spec.opponent if spec.candidate_is_white else spec.candidate
@@ -168,7 +178,9 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         if arguments.workers != 1:
             executor.shutdown()
 
-    score = sum(game.candidate_score for game in games) / len(games)
+    game_scores = [game.candidate_score for game in games]
+    score = sum(game_scores) / len(game_scores)
+    score_low, score_high = score_interval(game_scores)
     wins = sum(game.candidate_score == 1.0 for game in games)
     draws = sum(game.candidate_score == 0.5 for game in games)
     losses = sum(game.candidate_score == 0.0 for game in games)
@@ -196,7 +208,12 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             "draws": draws,
             "losses": losses,
             "score": score,
+            "score_95pct_interval": [score_low, score_high],
             "estimated_elo_difference": elo_from_score(score),
+            "estimated_elo_95pct_interval": [
+                elo_from_score(score_low),
+                elo_from_score(score_high),
+            ],
             "failed_terminations": failures,
         },
         "games": [asdict(game) for game in games],

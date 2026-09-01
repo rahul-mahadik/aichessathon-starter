@@ -8,6 +8,7 @@ fi
 WORKERS="${BENCH_WORKERS:-1}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 BASE_MS="${BENCH_BASE_MS:-10000}"
+AGENT="${BENCH_AGENT:-.}"
 OPPONENT="${BENCH_OPPONENT:-baselines/minimax}"
 OUTPUT="${BENCH_OUTPUT:-benchmark-results/aws-$(date -u +%Y%m%dT%H%M%SZ).json}"
 
@@ -34,6 +35,7 @@ fi
 
 "$UV_BIN" sync --frozen --python 3.12
 "$UV_BIN" run python -m benchmarks.run \
+  --agent "$AGENT" \
   --opponent "$OPPONENT" \
   --rounds "$ROUNDS" \
   --base-ms "$BASE_MS" \

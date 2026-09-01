@@ -127,6 +127,14 @@ DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined DISTILL_EXPECTED_RECORDS=11
   bash infra/aws/distill-gpu-run.sh --epochs 10 --batch-size 1024
 ```
 
+After training, compare the learned evaluator to the identical search using the handcrafted
+fallback. Colours are paired for every opening and the report is retained with the run:
+
+```bash
+DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined BENCH_ROUNDS=10 \
+  bash infra/aws/benchmark-distilled.sh
+```
+
 ## Cost and lifecycle guardrails
 
 1. Set an AWS Budget before launching GPU instances.
