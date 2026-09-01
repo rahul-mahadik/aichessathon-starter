@@ -135,6 +135,15 @@ DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined BENCH_ROUNDS=10 \
   bash infra/aws/benchmark-distilled.sh
 ```
 
+Set `DISTILL_OPPONENT_MODEL_NAME` to compare two learned checkpoints while keeping the search
+implementation identical:
+
+```bash
+DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined \
+DISTILL_OPPONENT_MODEL_NAME=medium BENCH_ROUNDS=10 \
+  bash infra/aws/benchmark-distilled.sh
+```
+
 ## Cost and lifecycle guardrails
 
 1. Set an AWS Budget before launching GPU instances.

@@ -3,24 +3,30 @@ set -euo pipefail
 
 RUN_ID="${DISTILL_RUN_ID:?DISTILL_RUN_ID is required}"
 MODEL_NAME="${DISTILL_MODEL_NAME:-combined}"
+OPPONENT_MODEL_NAME="${DISTILL_OPPONENT_MODEL_NAME:-fallback}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 WORKERS="${BENCH_WORKERS:-3}"
 BASE_MS="${BENCH_BASE_MS:-5000}"
-WORK_DIRECTORY="/tmp/aichessathon-benchmark-${RUN_ID}-${MODEL_NAME}"
+WORK_DIRECTORY="/tmp/aichessathon-benchmark-${RUN_ID}-${MODEL_NAME}-vs-${OPPONENT_MODEL_NAME}"
 CANDIDATE="$WORK_DIRECTORY/candidate"
-FALLBACK="$WORK_DIRECTORY/fallback"
-OUTPUT="$WORK_DIRECTORY/${MODEL_NAME}-vs-fallback.json"
+OPPONENT="$WORK_DIRECTORY/opponent"
+OUTPUT="$WORK_DIRECTORY/${MODEL_NAME}-vs-${OPPONENT_MODEL_NAME}.json"
 RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 
-mkdir -p "$CANDIDATE/weights" "$FALLBACK"
+mkdir -p "$CANDIDATE/weights" "$OPPONENT"
 cp agent.py nnue_runtime.py search_engine.py "$CANDIDATE/"
-cp agent.py nnue_runtime.py search_engine.py "$FALLBACK/"
+cp agent.py nnue_runtime.py search_engine.py "$OPPONENT/"
 aws s3 cp "$RUN_PREFIX/models/$MODEL_NAME/${MODEL_NAME}.npz" \
   "$CANDIDATE/weights/nnue.npz"
+if [[ "$OPPONENT_MODEL_NAME" != "fallback" ]]; then
+  mkdir -p "$OPPONENT/weights"
+  aws s3 cp "$RUN_PREFIX/models/$OPPONENT_MODEL_NAME/${OPPONENT_MODEL_NAME}.npz" \
+    "$OPPONENT/weights/nnue.npz"
+fi
 
 BENCH_AGENT="$CANDIDATE" \
-BENCH_OPPONENT="$FALLBACK" \
+BENCH_OPPONENT="$OPPONENT" \
 BENCH_ROUNDS="$ROUNDS" \
 BENCH_BASE_MS="$BASE_MS" \
 BENCH_WORKERS="$WORKERS" \
