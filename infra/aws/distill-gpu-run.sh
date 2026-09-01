@@ -4,6 +4,7 @@ set -euo pipefail
 RUN_ID="${DISTILL_RUN_ID:?DISTILL_RUN_ID is required}"
 MODEL_NAME="${DISTILL_MODEL_NAME:-combined}"
 TIERS="${DISTILL_TIERS:-medium deep}"
+EXPECTED_RECORDS="${DISTILL_EXPECTED_RECORDS:?DISTILL_EXPECTED_RECORDS is required}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 PYTORCH_PYTHON="${PYTORCH_PYTHON:-/opt/pytorch/bin/python}"
 TRAINING_DEPS="${TRAINING_DEPS:-.deps-aws-distilled}"
@@ -45,6 +46,7 @@ fi
 INSPECTION_PATH="$WORK_DIRECTORY/inspection.json"
 "$PYTORCH_PYTHON" -m distill.inspect_teacher \
   "${RAW_INPUTS[@]}" \
+  --expected-records "$EXPECTED_RECORDS" \
   --expected-candidates 8 >"$INSPECTION_PATH"
 cat "$INSPECTION_PATH"
 aws s3 cp "$INSPECTION_PATH" "$RUN_PREFIX/dataset/$MODEL_NAME/inspection.json"

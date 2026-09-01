@@ -123,7 +123,7 @@ DISTILL_DATA=training/data/distilled/100k-nodes \
 uploads the model under the run-specific S3 prefix:
 
 ```bash
-DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined \
+DISTILL_RUN_ID=pilot-001 DISTILL_MODEL_NAME=combined DISTILL_EXPECTED_RECORDS=110000 \
   bash infra/aws/distill-gpu-run.sh --epochs 10 --batch-size 1024
 ```
 
