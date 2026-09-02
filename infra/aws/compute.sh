@@ -193,7 +193,6 @@ deploy() {
 launch() {
   local workload="$1" market="${2:-on-demand}" count="${3:-1}" output_key instance_ids template_id tag_workload
   local subnet_id="${AICHESSATHON_SUBNET_ID:-}"
-  local launch_location=()
   if [[ ! "$count" =~ ^[1-9][0-9]*$ ]] || (( count > 100 )); then
     echo "Count must be an integer from 1 to 100." >&2
     exit 2
@@ -212,17 +211,22 @@ launch() {
       exit 2
     fi
     aws_project ec2 describe-subnets --subnet-ids "$subnet_id" >/dev/null
-    launch_location=(--subnet-id "$subnet_id")
   fi
+  run_instances() {
+    if [[ -n "$subnet_id" ]]; then
+      aws_project ec2 run-instances "$@" --subnet-id "$subnet_id"
+    else
+      aws_project ec2 run-instances "$@"
+    fi
+  }
   reserve_launch_budget "$workload" "$count"
 
   if [[ "$market" == "spot" ]]; then
-    if ! instance_ids="$(aws_project ec2 run-instances \
+    if ! instance_ids="$(run_instances \
       --launch-template "LaunchTemplateId=$template_id,Version=\$Latest" \
       --instance-initiated-shutdown-behavior terminate \
       --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}' \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Workload,Value=$tag_workload}]" \
-      "${launch_location[@]}" \
       --count "$count" --query 'Instances[].InstanceId' --output text)"; then
       release_launch_budget "$RESERVATION_AMOUNT"
       exit 1
@@ -232,11 +236,10 @@ launch() {
     if [[ "$workload" == "teacher" ]]; then
       shutdown_behavior=terminate
     fi
-    if ! instance_ids="$(aws_project ec2 run-instances \
+    if ! instance_ids="$(run_instances \
       --launch-template "LaunchTemplateId=$template_id,Version=\$Latest" \
       --instance-initiated-shutdown-behavior "$shutdown_behavior" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Workload,Value=$tag_workload}]" \
-      "${launch_location[@]}" \
       --count "$count" --query 'Instances[].InstanceId' --output text)"; then
       release_launch_budget "$RESERVATION_AMOUNT"
       exit 1

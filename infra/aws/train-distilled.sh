@@ -25,7 +25,7 @@ if (( ${#DATA_PATHS[@]} == 0 )); then
 fi
 
 "$PYTORCH_PYTHON" training/device_check.py --require-cuda
-"$PYTORCH_PYTHON" -m training.train_distilled \
+PYTHONUNBUFFERED=1 "$PYTORCH_PYTHON" -m training.train_distilled \
   --device cuda \
   --data "${DATA_PATHS[@]}" \
   --output "$OUTPUT_PATH" \

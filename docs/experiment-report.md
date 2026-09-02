@@ -45,10 +45,9 @@ contain real Stockfish signal, but not yet in a form that improves alpha-beta mo
 
 A train-time correctness pass added antisymmetry loss and four-times ranking weight for pairs
 involving the teacher's top three moves. It worked mechanically but did not improve the 110k-scale
-fixed-node result. Phase B has therefore completed the label-generation portion of one deliberately
-bounded 10x experiment that also changes the information content of the labels. Disagreement
-mining, training, and evaluation remain pending; further scaling remains conditional on those
-results.
+fixed-node result. Phase B has now completed label generation, disagreement mining, clean holdout
+selection, and dataset construction for one deliberately bounded 10x experiment. Four controlled
+students are training; evaluator and fixed-node conclusions remain conditional on their results.
 
 ## Evaluation framework
 
@@ -142,7 +141,7 @@ Operational fixes and lessons from the run:
   writers.
 - Completed shards are checked in S3 before work begins, which makes clean retries resumable.
 
-### Research work still pending
+### Controlled ablation preparation: complete
 
 Label generation alone does not answer whether Phase B improved the distilled evaluator. The
 remaining experiment holds architecture, initialization, loss weights, and optimizer steps fixed
@@ -166,15 +165,35 @@ top-three reorderings, outcome changes, quiet disagreements, and random coverage
 the largest raw centipawn deltas. The 10k/100k/1M trajectory also defines easy, medium, deep,
 unstable, and transitional holdout buckets.
 
-All four models use the corrected 128/64/32 architecture, seed 7, identical antisymmetry and
-top-move-aware losses, and exactly 500 optimizer steps in each of 20 epochs. The remaining sequence
-is dataset preparation, parallel GPU training, the unconstrained pure-evaluator tests, equal-node
-1k/10k/100k search tests, and finally equal-wall-clock tournaments for variants that pass the first
-two gates.
+Mining completed over all 200,000 positions. After reserving the 20,000-position holdout, the
+100,000 selected-hard set contains exactly 35,000 top-move flips, 20,000 top-three reorderings,
+20,000 outcome changes, 15,000 quiet disagreements, and 10,000 random-coverage examples. The
+100,000-position random control was sampled from the same 180,000-position training pool. Its
+55,605-position overlap with the hard set is the expected overlap for two samples of that size,
+not a train/evaluation leak.
 
-Phase B label generation is complete. Phase B distillation and evaluation are not yet complete, so
-the run currently establishes data readiness and systems reliability rather than a chess-strength
-result.
+| Search-depth transition | Top move changed | Mean root-value delta | Mean ranking disagreement |
+|---|---:|---:|---:|
+| 10k to 100k nodes | 41.57% | 0.0552 | 0.0653 |
+| 100k to 1M nodes | 31.94% | 0.0312 | 0.0360 |
+
+The clean holdout contains 6,753 easy, 1,409 medium, 1,200 deep, 2,472 unstable, and 8,166
+transitional examples. Selection hashes, exact input lists, and all bucket traces are retained in
+the run's `mined/phase-b-ablation/` prefix. Dataset conversion produced one 1,000,000-record base
+component and three 100,000-record treatment components; the four training recipes compose these
+without duplicating the base data in S3.
+
+### Training and evaluation: in progress
+
+All four models use the corrected 128/64/32 architecture, seed 7, identical antisymmetry and
+top-move-aware losses, and exactly 500 optimizer steps in each of 20 epochs. The four jobs run
+concurrently on one `g5.xlarge`: one process per vCPU, approximately 6.2 of 23 GiB device memory,
+and 99% aggregate A10G utilization. A prepared `c7i.8xlarge` will run the unconstrained
+pure-evaluator tests followed by equal-node 1k/10k/100k search tests. Equal-wall-clock tournaments
+remain gated on success in the first two experiments.
+
+Phase B data generation and preparation are complete. Distillation and evaluation are still in
+progress, so the run does not yet establish a chess-strength result.
 
 ## Training and diagnostic metrics
 
@@ -291,12 +310,12 @@ model SHA-256 hashes.
   quota.
 - Training used short `g6.xlarge` and `g5.xlarge` on-demand sessions.
 - Benchmarks use disposable `c7i.2xlarge` workers and terminate after reports are retained.
-- The corrected-model GPU, benchmark worker, and all eight Phase B teacher workers are terminated.
-  No project EC2 instances were active at the end of Phase B label generation.
+- All eight Phase B teacher workers are terminated. One `g5.xlarge` training worker and one reused
+  `c7i.8xlarge` evaluation worker are active for the controlled ablation.
 - Two untagged stopped instances created in April, each with an attached 16 GB `gp3` volume, remain
   in the account. They predate this project and were not modified.
 
-The reservation ledger currently authorizes `$156.50` of worst-case monthly project spend,
+The reservation ledger currently authorizes `$185.00` of worst-case monthly project spend,
 including a conservative `$20` baseline for prior runs. This is intentionally higher than expected
 actual cost because reservations are not released when workers finish early.
 
@@ -334,7 +353,7 @@ The three experiments now support a narrower diagnosis:
    the primary explanation because the students already lose the fixed-node test.
 
 Train-time antisymmetry and top-k weighting did not improve the 110k-scale fixed-node cell, so those
-changes alone are insufficient. Phase B label generation is complete, but the selected
-deep-disagreement dataset has not yet been mined or trained. Proceed to 10M/1M or an explicit
-policy head only if the resulting Phase B student improves unseen top-k agreement and at least one
-fixed-node cell. The handcrafted evaluator remains the submission default in the meantime.
+changes alone are insufficient. Phase B's four controlled students are now training. Proceed to
+10M/1M or an explicit policy head only if a resulting student improves unseen top-k agreement and
+at least one fixed-node cell. The handcrafted evaluator remains the submission default in the
+meantime.
