@@ -95,7 +95,7 @@ if (( failed )); then
 fi
 
 STATUS_PATH="$WORK_DIRECTORY/status.json"
-GIT_REVISION="$(git rev-parse HEAD)"
+GIT_REVISION="$(git -c safe.directory="$REPOSITORY" rev-parse HEAD)"
 jq -n \
   --arg run_id "$RUN_ID" \
   --arg git_revision "$GIT_REVISION" \
