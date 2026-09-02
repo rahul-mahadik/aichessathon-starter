@@ -56,8 +56,8 @@ mapfile -t DEEP_INPUTS < <(find "$RAW_DIRECTORY/deep-1m" -type f -name '*.jsonl.
 aws s3 sync "$MINED_DIRECTORY/" "$RUN_PREFIX/mined/phase-b-ablation/" --only-show-errors
 
 build_component() {
-  local name="$1" expected="$2"
-  shift 2
+  local name="$1" expected="$2" workers="$3"
+  shift 3
   local output="$DATASET_DIRECTORY/$name"
   if aws s3 ls "$RUN_PREFIX/dataset/$name/dataset.json" >/dev/null 2>&1; then
     echo "skip existing dataset component $name"
@@ -67,17 +67,32 @@ build_component() {
     "$@" --expected-records "$expected" --expected-candidates 8 \
     >"$MINED_DIRECTORY/inspection-$name.json"
   "$VENV_DIRECTORY/bin/python" -m distill.build_dataset \
-    "$@" --output "$output" --records-per-shard 10_000
+    "$@" --output "$output" --records-per-shard 10_000 --workers "$workers"
   aws s3 sync "$output/" "$RUN_PREFIX/dataset/$name/" --only-show-errors
   aws s3 cp "$MINED_DIRECTORY/inspection-$name.json" \
     "$RUN_PREFIX/dataset/$name/inspection.json" --only-show-errors
 }
 
 mapfile -t BASE_INPUTS < <(find "$RAW_DIRECTORY/medium" -type f -name '*.jsonl.gz' | sort)
-build_component phase-b-m-base 1000000 "${BASE_INPUTS[@]}"
-build_component phase-b-r-deep-extra "$SELECT" "$MINED_DIRECTORY/random-deep.jsonl.gz"
-build_component phase-b-h-medium-extra "$SELECT" "$MINED_DIRECTORY/high-medium.jsonl.gz"
-build_component phase-b-h-deep-extra "$SELECT" "$MINED_DIRECTORY/high-deep.jsonl.gz"
+build_component phase-b-m-base 1000000 32 "${BASE_INPUTS[@]}"
+
+pids=()
+build_component phase-b-r-deep-extra "$SELECT" 1 "$MINED_DIRECTORY/random-deep.jsonl.gz" &
+pids+=("$!")
+build_component phase-b-h-medium-extra "$SELECT" 1 "$MINED_DIRECTORY/high-medium.jsonl.gz" &
+pids+=("$!")
+build_component phase-b-h-deep-extra "$SELECT" 1 "$MINED_DIRECTORY/high-deep.jsonl.gz" &
+pids+=("$!")
+failed=0
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    failed=1
+  fi
+done
+if (( failed )); then
+  echo "one or more Phase B extra dataset builds failed" >&2
+  exit 1
+fi
 
 STATUS_PATH="$WORK_DIRECTORY/status.json"
 GIT_REVISION="$(git rev-parse HEAD)"

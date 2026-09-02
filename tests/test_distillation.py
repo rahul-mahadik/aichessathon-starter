@@ -8,6 +8,7 @@ import chess
 import numpy as np
 import torch
 
+from distill.build_dataset import build_parallel
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
 from distill.inspect_teacher import inspect
 from distill.mine_depth_disagreements import depth_distance, mine
@@ -76,6 +77,25 @@ class DistillationTests(unittest.TestCase):
         self.assertEqual(summary["candidates_per_record"], 1.0)
         self.assertEqual(summary["duplicate_fens"], 0)
         self.assertEqual(summary["incomplete_multipv_records"], 0)
+
+    def test_parallel_dataset_build_merges_partitions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = [root / "raw-0.jsonl.gz", root / "raw-1.jsonl.gz"]
+            for path in inputs:
+                write_records(path, [self.record()])
+            metadata = build_parallel(
+                inputs,
+                root / "dataset",
+                records_per_shard=10,
+                cp_scale=600.0,
+                workers=2,
+            )
+            shards = sorted((root / "dataset").glob("part-*.npz"))
+
+        self.assertEqual(metadata["records"], 2)
+        self.assertEqual(metadata["workers"], 2)
+        self.assertEqual(len(shards), 2)
 
     def test_child_target_flips_perspective(self) -> None:
         group = record_to_group(self.record())
