@@ -45,8 +45,10 @@ contain real Stockfish signal, but not yet in a form that improves alpha-beta mo
 
 A train-time correctness pass added antisymmetry loss and four-times ranking weight for pairs
 involving the teacher's top three moves. It worked mechanically but did not improve the 110k-scale
-fixed-node result. The project is therefore running one deliberately bounded 10x experiment that
-also changes the information content of the labels; further scaling remains conditional.
+fixed-node result. Phase B has therefore completed the label-generation portion of one deliberately
+bounded 10x experiment that also changes the information content of the labels. Disagreement
+mining, training, and evaluation remain pending; further scaling remains conditional on those
+results.
 
 ## Evaluation framework
 
@@ -86,13 +88,74 @@ Durable artifacts:
 - Unseen evaluator holdout and results: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/eval-20260901a/`
 - Scale corpus and traces: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/scale-20260901a/`
 
-### Scale experiment in progress
+## Phase B progress recap
 
-The disjoint Phase B corpus excludes the original 110,000 training positions and the 2,004
-evaluator-holdout/placeholder positions at the model-visible feature level. It contains 1,000,000
-medium positions plus a 200,000-position depth-mining pool, split into 256 shards per tier. The
-same mining positions receive 10k, 100k, and 1M-node MultiPV labels. A retained miner then selects
-the 100,000 positions with the largest 100k-to-1M value/ranking change for deep training.
+Phase B tests the data-scale and information-selection hypotheses left open by the 110,000-position
+pilot. Its target dataset is 1,000,000 medium positions plus 100,000 deep positions selected because
+additional Stockfish search materially changes their value or move ordering. This is intentionally
+different from merely adding more randomly sampled deep labels.
+
+### Corpus and label generation: complete
+
+The disjoint corpus excludes the original 110,000 training positions and the 2,004 evaluator
+holdout/placeholder positions at the model-visible feature level. It contains 1,000,000 medium
+positions and a separate 200,000-position depth-mining pool. All tiers use 256 shards. The mining
+pool was labeled at three node budgets on the same positions so changes with search depth can be
+measured directly.
+
+| Label tier | Unique positions | Nodes per position | Output shards | Status |
+|---|---:|---:|---:|---|
+| Medium | 1,000,000 | 100,000 | 256/256 | Complete |
+| Deep mining: shallow | 200,000 | 10,000 | 256/256 | Complete |
+| Deep mining: medium | 200,000 | 100,000 | 256/256 | Complete |
+| Deep mining: deep | 200,000 | 1,000,000 | 256/256 | Complete |
+
+This produced 1,600,000 teacher records over 1,200,000 unique positions, representing a nominal
+322 billion requested Stockfish nodes. The four compressed raw tiers occupy approximately 208 MB
+in S3. All 32 worker/tier completion markers report `failed=0`. The final 256 deep-1M gzip shards
+passed an end-to-end integrity check and contain exactly 200,000 records.
+
+Artifacts are retained under:
+
+`s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/scale-20260901a/`
+
+### Compute execution
+
+Labeling launched on eight `c7i.8xlarge` instances in `us-east-1`: 32 vCPUs and 64 GiB per worker,
+or 256 vCPUs at peak. Each shard used one single-threaded Stockfish process, so the workload was
+CPU-bound and GPUs would not have helped. The first workers launched around 08:00 UTC on 2026-09-02;
+the final S3 object arrived at 09:25 UTC. Workers terminated after completing their assignments,
+and no EC2 instances remain active.
+
+Seven workers finished first, leaving one worker responsible for the last 32 deep-1M shards. The
+fixed modulo assignment and whole-shard uploads made those in-flight shards impossible to reassign
+without restarting them. A duplicate retry briefly oversubscribed the last 32-vCPU worker with two
+copies of the same work. One command completed and shut the instance down; the other became
+undeliverable. The resulting S3 tier passed gzip and record-count validation.
+
+Operational fixes and lessons from the run:
+
+- SSM cannot be assumed to provide `HOME`; worker setup now uses an explicit repository default.
+- Environment setup is reusable, so a retry does not fail because its virtual environment exists.
+- Future scale runs should use 4-8 times more, smaller shards, dynamic work claiming, per-shard
+  leases, and periodic checkpoints. This removes fixed-worker stragglers and prevents duplicate
+  writers.
+- Completed shards are checked in S3 before work begins, which makes clean retries resumable.
+
+### Research work still pending
+
+Label generation alone does not answer whether Phase B improved the distilled evaluator. The
+remaining experiment is:
+
+1. Score the 200,000 paired positions for 100k-to-1M value and ranking disagreement.
+2. Select the 100,000 most information-bearing deep records and build the combined training data.
+3. Train corrected student variants on GPU, including the antisymmetry and top-move objectives.
+4. Run the pure unseen evaluator test with no runtime constraint.
+5. Run equal-node 1k/10k/100k search tests; only then run equal-wall-clock tournaments.
+
+Phase B label generation is complete. Phase B distillation and evaluation are not yet complete, so
+the run currently establishes data readiness and systems reliability rather than a chess-strength
+result.
 
 ## Training and diagnostic metrics
 
@@ -205,11 +268,12 @@ model SHA-256 hashes.
 - EC2 workers have a six-hour safety timer, encrypted disposable volumes, project/workload tags,
   and an instance role instead of static AWS credentials.
 - Pilot teacher generation used one `c7i.2xlarge` Spot worker.
-- Phase B uses eight `c7i.8xlarge` workers: 256 vCPUs total, matching the regional quota.
+- Phase B label generation used eight `c7i.8xlarge` workers: 256 vCPUs total, matching the regional
+  quota.
 - Training used short `g6.xlarge` and `g5.xlarge` on-demand sessions.
 - Benchmarks use disposable `c7i.2xlarge` workers and terminate after reports are retained.
-- The corrected-model GPU and benchmark worker are terminated. Eight disposable Phase B teacher
-  workers are active and will terminate after the label ladder or the six-hour safety timer.
+- The corrected-model GPU, benchmark worker, and all eight Phase B teacher workers are terminated.
+  No project EC2 instances were active at the end of Phase B label generation.
 - Two untagged stopped instances created in April, each with an attached 16 GB `gp3` volume, remain
   in the account. They predate this project and were not modified.
 
@@ -251,8 +315,7 @@ The three experiments now support a narrower diagnosis:
    the primary explanation because the students already lose the fixed-node test.
 
 Train-time antisymmetry and top-k weighting did not improve the 110k-scale fixed-node cell, so those
-changes alone are insufficient. Phase B is the bounded test of the remaining data-scale and
-information-selection hypotheses: 1M medium labels plus 100k selected deep-disagreement labels.
-Proceed to 10M/1M or an explicit policy head only if Phase B improves unseen top-k agreement and at
-least one fixed-node cell. The handcrafted evaluator remains the submission default in the
-meantime.
+changes alone are insufficient. Phase B label generation is complete, but the selected
+deep-disagreement dataset has not yet been mined or trained. Proceed to 10M/1M or an explicit
+policy head only if the resulting Phase B student improves unseen top-k agreement and at least one
+fixed-node cell. The handcrafted evaluator remains the submission default in the meantime.

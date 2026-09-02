@@ -10,7 +10,7 @@ import torch
 
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
 from distill.inspect_teacher import inspect
-from distill.mine_depth_disagreements import depth_distance
+from distill.mine_depth_disagreements import depth_distance, mine
 from distill.sample_gigafish import _valid_unique_positions, reservoir_sample
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
@@ -142,9 +142,91 @@ class DistillationTests(unittest.TestCase):
         )
         distance = depth_distance(shallow, deep, ranking_margin=0.0)
         self.assertTrue(distance.top_move_changed)
+        self.assertGreater(distance.top_three_distance, 0.0)
         self.assertEqual(distance.common_candidates, 2)
         self.assertEqual(distance.ranking_disagreement, 1.0)
         self.assertGreater(distance.distance, 2.0)
+
+    def test_depth_miner_emits_matched_ablation_controls(self) -> None:
+        boards: list[chess.Board] = []
+        for move in (None, "e2e4", "d2d4", "c2c4", "g1f3", "b2b3"):
+            board = chess.Board()
+            if move is not None:
+                board.push_uci(move)
+            boards.append(board)
+
+        def teacher_record(
+            board: chess.Board, node_budget: int, reverse: bool
+        ) -> TeacherRecord:
+            moves = list(board.legal_moves)[:3]
+            if reverse:
+                moves.reverse()
+            candidates = tuple(
+                Candidate(
+                    move=move.uci(),
+                    score=TeacherScore(cp=90 - 30 * index, mate=None, wdl=None),
+                    pv=(),
+                    depth=12,
+                    seldepth=16,
+                    nodes=node_budget,
+                )
+                for index, move in enumerate(moves)
+            )
+            return TeacherRecord(
+                fen=board.fen(),
+                teacher="Stockfish 18",
+                node_budget=node_budget,
+                depth_budget=None,
+                multipv=3,
+                root_score=candidates[0].score,
+                candidates=candidates,
+                best_move=candidates[0].move,
+            )
+
+        low = [teacher_record(board, 10_000, False) for board in boards]
+        medium = [
+            teacher_record(board, 100_000, index % 3 == 0)
+            for index, board in enumerate(boards)
+        ]
+        deep = [
+            teacher_record(board, 1_000_000, index % 2 == 0)
+            for index, board in enumerate(boards)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            low_path = root / "low.jsonl.gz"
+            medium_path = root / "medium.jsonl.gz"
+            deep_path = root / "deep.jsonl.gz"
+            write_records(low_path, low)
+            write_records(medium_path, medium)
+            write_records(deep_path, deep)
+            report = mine(
+                [low_path],
+                [medium_path],
+                [deep_path],
+                output=root / "mined",
+                select=3,
+                ranking_margin=0.0,
+                seed=11,
+            )
+            high_medium = list(read_records([root / "mined/high-medium.jsonl.gz"]))
+            high_deep = list(read_records([root / "mined/high-deep.jsonl.gz"]))
+            random_deep = list(read_records([root / "mined/random-deep.jsonl.gz"]))
+            bucket_positions = sum(
+                len(path.read_text().splitlines())
+                for path in (root / "mined/buckets").glob("*.epd")
+            )
+
+        self.assertEqual(report["positions"], 6)
+        self.assertEqual(len(high_medium), 3)
+        self.assertEqual(len(random_deep), 3)
+        self.assertEqual(
+            [record.fen for record in high_medium],
+            [record.fen for record in high_deep],
+        )
+        self.assertTrue(all(record.node_budget == 100_000 for record in high_medium))
+        self.assertTrue(all(record.node_budget == 1_000_000 for record in high_deep))
+        self.assertEqual(bucket_positions, 6)
 
     def test_sparse_indices_are_in_range(self) -> None:
         encoded = encode_board(chess.Board())

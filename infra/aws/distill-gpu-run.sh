@@ -5,6 +5,7 @@ RUN_ID="${DISTILL_RUN_ID:?DISTILL_RUN_ID is required}"
 MODEL_NAME="${DISTILL_MODEL_NAME:-combined}"
 TIERS="${DISTILL_TIERS:-medium deep}"
 REUSE_DATASET_MODEL="${DISTILL_REUSE_DATASET_MODEL:-}"
+REUSE_DATASET_MODELS="${DISTILL_REUSE_DATASET_MODELS:-$REUSE_DATASET_MODEL}"
 EXPECTED_RECORDS="${DISTILL_EXPECTED_RECORDS:?DISTILL_EXPECTED_RECORDS is required}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 PYTORCH_PYTHON="${PYTORCH_PYTHON:-/opt/pytorch/bin/python}"
@@ -29,15 +30,26 @@ fi
 export PYTHONPATH="$PWD/$TRAINING_DEPS${PYTHONPATH:+:$PYTHONPATH}"
 
 INSPECTION_PATH="$WORK_DIRECTORY/inspection.json"
-if [[ -n "$REUSE_DATASET_MODEL" ]]; then
-  aws s3 sync "$RUN_PREFIX/dataset/$REUSE_DATASET_MODEL/" "$DATASET_DIRECTORY/"
-  if [[ ! -f "$DATASET_DIRECTORY/dataset.json" ]]; then
-    echo "Reusable dataset $REUSE_DATASET_MODEL has no dataset.json" >&2
-    exit 1
-  fi
-  DATASET_RECORDS="$(jq -r '.records' "$DATASET_DIRECTORY/dataset.json")"
+DATASET_PATHS=()
+if [[ -n "$REUSE_DATASET_MODELS" ]]; then
+  DATASET_RECORDS=0
+  for dataset_model in $REUSE_DATASET_MODELS; do
+    if [[ ! "$dataset_model" =~ ^[a-zA-Z0-9-]+$ ]]; then
+      echo "DISTILL_REUSE_DATASET_MODELS contains an unsafe name: $dataset_model" >&2
+      exit 2
+    fi
+    component_directory="$DATASET_DIRECTORY/$dataset_model"
+    aws s3 sync "$RUN_PREFIX/dataset/$dataset_model/" "$component_directory/"
+    if [[ ! -f "$component_directory/dataset.json" ]]; then
+      echo "Reusable dataset $dataset_model has no dataset.json" >&2
+      exit 1
+    fi
+    component_records="$(jq -r '.records' "$component_directory/dataset.json")"
+    DATASET_RECORDS=$((DATASET_RECORDS + component_records))
+    DATASET_PATHS+=("$component_directory")
+  done
   if [[ "$DATASET_RECORDS" != "$EXPECTED_RECORDS" ]]; then
-    echo "Reusable dataset has $DATASET_RECORDS records, expected $EXPECTED_RECORDS" >&2
+    echo "Reusable datasets have $DATASET_RECORDS records, expected $EXPECTED_RECORDS" >&2
     exit 1
   fi
 else
@@ -69,9 +81,10 @@ else
     --output "$DATASET_DIRECTORY" \
     --records-per-shard 10_000
   aws s3 sync "$DATASET_DIRECTORY/" "$RUN_PREFIX/dataset/$MODEL_NAME/"
+  DATASET_PATHS+=("$DATASET_DIRECTORY")
 fi
 
-DISTILL_DATA="$DATASET_DIRECTORY" \
+DISTILL_DATASETS="${DATASET_PATHS[*]}" \
 DISTILL_OUTPUT="$OUTPUT_PATH" \
 DISTILL_ARTIFACT_PREFIX="$RUN_PREFIX/models/$MODEL_NAME" \
   bash infra/aws/train-distilled.sh "$@"

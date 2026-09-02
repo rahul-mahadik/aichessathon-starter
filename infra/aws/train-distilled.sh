@@ -3,7 +3,7 @@ set -euo pipefail
 
 PYTORCH_PYTHON="${PYTORCH_PYTHON:-/opt/pytorch/bin/python}"
 TRAINING_DEPS="${TRAINING_DEPS:-.deps-aws-distilled}"
-DATA_PATH="${DISTILL_DATA:-training/data/distilled}"
+DATA_SPEC="${DISTILL_DATASETS:-${DISTILL_DATA:-training/data/distilled}}"
 OUTPUT_PATH="${DISTILL_OUTPUT:-weights/nnue.npz}"
 
 if [[ ! -x "$PYTORCH_PYTHON" ]]; then
@@ -18,11 +18,16 @@ if [[ ! -d "$TRAINING_DEPS/chess" ]]; then
     -r training/requirements-distilled-aws.txt
 fi
 export PYTHONPATH="$PWD/$TRAINING_DEPS${PYTHONPATH:+:$PYTHONPATH}"
+read -r -a DATA_PATHS <<<"$DATA_SPEC"
+if (( ${#DATA_PATHS[@]} == 0 )); then
+  echo "DISTILL_DATASETS must contain at least one dataset path" >&2
+  exit 2
+fi
 
 "$PYTORCH_PYTHON" training/device_check.py --require-cuda
 "$PYTORCH_PYTHON" -m training.train_distilled \
   --device cuda \
-  --data "$DATA_PATH" \
+  --data "${DATA_PATHS[@]}" \
   --output "$OUTPUT_PATH" \
   "$@"
 

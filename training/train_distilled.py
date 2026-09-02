@@ -247,6 +247,11 @@ def main() -> None:
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument(
+        "--max-train-batches",
+        type=int,
+        help="cap optimizer steps per epoch for equal-compute ablations",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--ranking-weight", type=float, default=0.25)
     parser.add_argument("--top-move-weight", type=float, default=0.25)
@@ -259,8 +264,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
-    if arguments.epochs < 1 or arguments.batch_size < 1:
-        parser.error("--epochs and --batch-size must be positive")
+    if (
+        arguments.epochs < 1
+        or arguments.batch_size < 1
+        or (arguments.max_train_batches is not None and arguments.max_train_batches < 1)
+    ):
+        parser.error("--epochs, --batch-size, and --max-train-batches must be positive")
     if min(
         arguments.ranking_weight,
         arguments.top_move_weight,
@@ -318,6 +327,11 @@ def main() -> None:
         training_loss = 0.0
         batch_count = 0
         for batch in batches:
+            if (
+                arguments.max_train_batches is not None
+                and batch_count >= arguments.max_train_batches
+            ):
+                break
             optimizer.zero_grad(set_to_none=True)
             predictions, flipped_predictions = model.forward_with_flipped_turns(
                 batch["features"], batch["turns"]
@@ -379,6 +393,7 @@ def main() -> None:
             "device": device,
             "epochs": arguments.epochs,
             "batch_size": arguments.batch_size,
+            "max_train_batches": arguments.max_train_batches,
             "learning_rate": arguments.learning_rate,
             "ranking_weight": arguments.ranking_weight,
             "top_move_weight": arguments.top_move_weight,
