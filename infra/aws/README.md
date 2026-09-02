@@ -197,6 +197,45 @@ DISTILL_OPPONENT_MODEL_NAME=medium BENCH_ROUNDS=10 \
   bash infra/aws/benchmark-distilled.sh
 ```
 
+## Phase C broad-data and capacity scaling
+
+Phase C deliberately separates research strength from wall-clock deployment. It forms a nested,
+feature-disjoint broad-medium dataset with 1M, 3M, and 10M cells, then independently scales the
+student to approximately 10, 20, and 40 MB on the 1M component. Every initial cell retains the
+Phase B loss, seed, batch size, and 10,000-step optimization budget.
+
+Create and upload the 9M-position extension on one CPU worker, then label its 2,250 four-thousand
+position shards across eight 32-vCPU workers:
+
+```bash
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-corpus.sh
+
+TEACHER_RUN_ID=phase-c-20260902a TEACHER_TIER=medium TEACHER_NODES=100000 \
+TEACHER_SHARDS=2250 TEACHER_WORKER_COUNT=8 TEACHER_WORKER_INDEX=0 \
+TEACHER_PARALLELISM=32 bash infra/aws/teacher-worker.sh
+```
+
+Run one worker index from 0 through 7. Once all raw shards exist, build the exact 2M and 7M
+components and copy the retained Phase B 1M component/model into the Phase C namespace:
+
+```bash
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-prepare.sh
+```
+
+Train data-scale cells `D3` and `D10`, or capacity cells `C10`, `C20`, and `C40`:
+
+```bash
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-train.sh D3
+```
+
+Pure evaluator scoring remains unconstrained by time. Fixed-node games are the initial search
+gate; Phase C does not use wall-clock loss as a reason to stop a promising scaling curve:
+
+```bash
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-evaluate.sh
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-benchmark.sh phase-c-d3m-c4p5
+```
+
 ## Cost and lifecycle guardrails
 
 1. Set an AWS Budget before launching GPU instances.

@@ -12,7 +12,7 @@ from distill.build_dataset import build_parallel
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
 from distill.inspect_teacher import inspect
 from distill.mine_depth_disagreements import depth_distance, mine
-from distill.sample_gigafish import _valid_unique_positions, reservoir_sample
+from distill.sample_gigafish import _valid_unique_positions, reservoir_sample, sample_corpus
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
 from training.nnue import SparseValueNetwork, export_quantized
@@ -36,10 +36,36 @@ class DistillationTests(unittest.TestCase):
         same_features.fullmove_number = 42
         alternative = starting.copy()
         alternative.push_uci("e2e4")
-        positions = _valid_unique_positions(
-            [same_features.fen(), alternative.fen()], 1, excluded
-        )
+        positions = _valid_unique_positions([same_features.fen(), alternative.fen()], 1, excluded)
         self.assertEqual(positions, [alternative.fen()])
+
+    def test_corpus_can_create_a_single_nonempty_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "cache"
+            cache.mkdir()
+            source = cache / "data-00001.parquet"
+            source.touch()
+            rows = [chess.STARTING_FEN]
+            with (
+                unittest.mock.patch("distill.sample_gigafish._download"),
+                unittest.mock.patch("distill.sample_gigafish._sha256", return_value="test"),
+                unittest.mock.patch(
+                    "distill.sample_gigafish._parquet_rows", return_value=iter(rows)
+                ),
+            ):
+                manifest = sample_corpus(
+                    output=root / "corpus",
+                    cache=cache,
+                    medium_positions=1,
+                    deep_positions=0,
+                    shards_per_tier=1,
+                    source_shards=[1],
+                    seed=7,
+                )
+
+        self.assertEqual(set(manifest["tiers"]), {"medium"})
+        self.assertEqual(manifest["tiers"]["medium"]["positions"], 1)
 
     def record(self) -> TeacherRecord:
         score = TeacherScore(cp=42, mate=None, wdl=(320, 500, 180))
@@ -203,9 +229,7 @@ class DistillationTests(unittest.TestCase):
                 board.push_uci(move)
             boards.append(board)
 
-        def teacher_record(
-            board: chess.Board, node_budget: int, reverse: bool
-        ) -> TeacherRecord:
+        def teacher_record(board: chess.Board, node_budget: int, reverse: bool) -> TeacherRecord:
             moves = list(board.legal_moves)[:3]
             if reverse:
                 moves.reverse()
@@ -233,12 +257,10 @@ class DistillationTests(unittest.TestCase):
 
         low = [teacher_record(board, 10_000, False) for board in boards]
         medium = [
-            teacher_record(board, 100_000, index % 3 == 0)
-            for index, board in enumerate(boards)
+            teacher_record(board, 100_000, index % 3 == 0) for index, board in enumerate(boards)
         ]
         deep = [
-            teacher_record(board, 1_000_000, index % 2 == 0)
-            for index, board in enumerate(boards)
+            teacher_record(board, 1_000_000, index % 2 == 0) for index, board in enumerate(boards)
         ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -335,9 +357,7 @@ class DistillationTests(unittest.TestCase):
             "value_mask": torch.tensor(
                 [[True, True, True, False, False, False, False, False, False]]
             ),
-            "candidate_scores": torch.tensor(
-                [[0.8, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
-            ),
+            "candidate_scores": torch.tensor([[0.8, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
             "candidate_mask": torch.tensor(
                 [[True, True, False, False, False, False, False, False]]
             ),

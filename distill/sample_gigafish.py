@@ -147,8 +147,8 @@ def sample_corpus(
     exclude_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     required = medium_positions + deep_positions
-    if required < 2 or min(medium_positions, deep_positions) < 1:
-        raise ValueError("medium_positions and deep_positions must be positive")
+    if required < 1 or medium_positions < 0 or deep_positions < 0:
+        raise ValueError("medium_positions and deep_positions must be non-negative")
     if not source_shards:
         raise ValueError("at least one source shard is required")
 
@@ -174,16 +174,13 @@ def sample_corpus(
     deep = positions[medium_positions:]
 
     output.mkdir(parents=True, exist_ok=True)
-    tiers = {
-        "medium": {
-            "positions": len(medium),
-            "shards": _write_tier(output, "medium", medium, shards_per_tier),
-        },
-        "deep": {
-            "positions": len(deep),
-            "shards": _write_tier(output, "deep", deep, shards_per_tier),
-        },
-    }
+    tiers: dict[str, dict[str, Any]] = {}
+    for tier, tier_positions in (("medium", medium), ("deep", deep)):
+        if tier_positions:
+            tiers[tier] = {
+                "positions": len(tier_positions),
+                "shards": _write_tier(output, tier, tier_positions, shards_per_tier),
+            }
     manifest: dict[str, Any] = {
         "format": "aichessathon-teacher-corpus-v1",
         "dataset": DATASET_REPOSITORY,
