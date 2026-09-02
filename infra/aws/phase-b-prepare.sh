@@ -3,6 +3,7 @@ set -euo pipefail
 
 RUN_ID="${DISTILL_RUN_ID:-scale-20260901a}"
 SELECT="${DISTILL_SELECT:-100000}"
+HOLDOUT="${DISTILL_HOLDOUT:-20000}"
 SEED="${DISTILL_SEED:-7}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 REPOSITORY="${AICHESSATHON_REPOSITORY:-/home/ec2-user/aichessathon}"
@@ -14,8 +15,8 @@ RAW_DIRECTORY="$WORK_DIRECTORY/raw"
 MINED_DIRECTORY="$WORK_DIRECTORY/mined"
 DATASET_DIRECTORY="$WORK_DIRECTORY/dataset"
 
-if ! [[ "$SELECT" =~ ^[1-9][0-9]*$ && "$SEED" =~ ^[0-9]+$ ]]; then
-  echo "DISTILL_SELECT must be positive and DISTILL_SEED must be non-negative" >&2
+if ! [[ "$SELECT" =~ ^[1-9][0-9]*$ && "$HOLDOUT" =~ ^[0-9]+$ && "$SEED" =~ ^[0-9]+$ ]]; then
+  echo "DISTILL_SELECT must be positive; DISTILL_HOLDOUT and DISTILL_SEED must be non-negative" >&2
   exit 2
 fi
 
@@ -49,6 +50,7 @@ mapfile -t DEEP_INPUTS < <(find "$RAW_DIRECTORY/deep-1m" -type f -name '*.jsonl.
   --medium "${MEDIUM_INPUTS[@]}" \
   --deep "${DEEP_INPUTS[@]}" \
   --select "$SELECT" \
+  --holdout "$HOLDOUT" \
   --seed "$SEED" \
   --output "$MINED_DIRECTORY"
 aws s3 sync "$MINED_DIRECTORY/" "$RUN_PREFIX/mined/phase-b-ablation/" --only-show-errors
@@ -83,8 +85,9 @@ jq -n \
   --arg run_id "$RUN_ID" \
   --arg git_revision "$GIT_REVISION" \
   --argjson selected "$SELECT" \
+  --argjson holdout "$HOLDOUT" \
   --argjson seed "$SEED" \
-  '{run_id:$run_id,status:"complete",git_revision:$git_revision,selected:$selected,seed:$seed}' \
+  '{run_id:$run_id,status:"complete",git_revision:$git_revision,selected:$selected,holdout:$holdout,seed:$seed}' \
   >"$STATUS_PATH"
 aws s3 cp "$STATUS_PATH" "$RUN_PREFIX/status/phase-b-prepare.json" --only-show-errors
 

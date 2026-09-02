@@ -145,13 +145,32 @@ Operational fixes and lessons from the run:
 ### Research work still pending
 
 Label generation alone does not answer whether Phase B improved the distilled evaluator. The
-remaining experiment is:
+remaining experiment holds architecture, initialization, loss weights, and optimizer steps fixed
+across four data ablations:
 
-1. Score the 200,000 paired positions for 100k-to-1M value and ranking disagreement.
-2. Select the 100,000 most information-bearing deep records and build the combined training data.
-3. Train corrected student variants on GPU, including the antisymmetry and top-move objectives.
-4. Run the pure unseen evaluator test with no runtime constraint.
-5. Run equal-node 1k/10k/100k search tests; only then run equal-wall-clock tournaments.
+| Model | Base data | Extra positions | Extra labels | Question |
+|---|---|---|---|---|
+| `phase-b-m` | 1M medium | none | none | Scale baseline |
+| `phase-b-r-deep` | 1M medium | 100k random mining-pool positions | 1M nodes | Does random deep data help? |
+| `phase-b-h-medium` | 1M medium | 100k selected hard positions | 100k nodes | Does hard-position selection help? |
+| `phase-b-h-deep` | 1M medium | the same 100k hard positions | 1M nodes | Does deeper search add transferable information? |
+
+The primary causal comparisons are `phase-b-h-deep` versus `phase-b-h-medium` for label depth and
+`phase-b-h-deep` versus `phase-b-r-deep` for information-directed selection. A deterministic
+20,000-position subset of the mining pool is reserved before selection as a common evaluation
+holdout; none of the four models trains on it.
+
+Disagreement uses expected WDL change, candidate ranking reversals, top-three displacement, and a
+large explicit weight for best-move flips. Selection is stratified across best-move flips,
+top-three reorderings, outcome changes, quiet disagreements, and random coverage rather than taking
+the largest raw centipawn deltas. The 10k/100k/1M trajectory also defines easy, medium, deep,
+unstable, and transitional holdout buckets.
+
+All four models use the corrected 128/64/32 architecture, seed 7, identical antisymmetry and
+top-move-aware losses, and exactly 500 optimizer steps in each of 20 epochs. The remaining sequence
+is dataset preparation, parallel GPU training, the unconstrained pure-evaluator tests, equal-node
+1k/10k/100k search tests, and finally equal-wall-clock tournaments for variants that pass the first
+two gates.
 
 Phase B label generation is complete. Phase B distillation and evaluation are not yet complete, so
 the run currently establishes data readiness and systems reliability rather than a chess-strength

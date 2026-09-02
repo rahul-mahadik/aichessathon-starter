@@ -208,25 +208,33 @@ class DistillationTests(unittest.TestCase):
                 select=3,
                 ranking_margin=0.0,
                 seed=11,
+                holdout=1,
             )
             high_medium = list(read_records([root / "mined/high-medium.jsonl.gz"]))
             high_deep = list(read_records([root / "mined/high-deep.jsonl.gz"]))
             random_deep = list(read_records([root / "mined/random-deep.jsonl.gz"]))
+            holdout_deep = list(read_records([root / "mined/holdout-deep.jsonl.gz"]))
             bucket_positions = sum(
                 len(path.read_text().splitlines())
                 for path in (root / "mined/buckets").glob("*.epd")
             )
 
         self.assertEqual(report["positions"], 6)
+        self.assertEqual(report["training_pool"], 5)
         self.assertEqual(len(high_medium), 3)
         self.assertEqual(len(random_deep), 3)
+        self.assertEqual(len(holdout_deep), 1)
         self.assertEqual(
             [record.fen for record in high_medium],
             [record.fen for record in high_deep],
         )
         self.assertTrue(all(record.node_budget == 100_000 for record in high_medium))
         self.assertTrue(all(record.node_budget == 1_000_000 for record in high_deep))
-        self.assertEqual(bucket_positions, 6)
+        self.assertFalse(
+            {record.fen for record in holdout_deep}
+            & {record.fen for record in high_deep + random_deep}
+        )
+        self.assertEqual(bucket_positions, 1)
 
     def test_sparse_indices_are_in_range(self) -> None:
         encoded = encode_board(chess.Board())

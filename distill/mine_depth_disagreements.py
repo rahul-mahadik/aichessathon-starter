@@ -267,6 +267,10 @@ def _fen_digest(rows: list[DepthRow]) -> str:
     return digest.hexdigest()
 
 
+def _holdout_order(row: DepthRow, seed: int) -> bytes:
+    return hashlib.sha256(f"{seed}:holdout:{row.fen}".encode()).digest()
+
+
 def mine(
     low_paths: list[Path],
     medium_paths: list[Path],
@@ -276,6 +280,7 @@ def mine(
     select: int,
     ranking_margin: float,
     seed: int,
+    holdout: int = 0,
 ) -> dict[str, object]:
     low = _records_by_fen(low_paths)
     medium = _records_by_fen(medium_paths)
@@ -307,14 +312,25 @@ def mine(
                 mate=_contains_mate(deep[fen]),
             )
         )
-    selection_size = min(select, len(rows))
-    selected, strata = _stratified_selection(rows, selection_size, seed)
+    if holdout < 0 or holdout >= len(rows):
+        raise ValueError("holdout must be non-negative and smaller than the paired corpus")
+    holdout_rows = sorted(rows, key=lambda row: _holdout_order(row, seed))[:holdout]
+    holdout_fens = {row.fen for row in holdout_rows}
+    training_rows = [row for row in rows if row.fen not in holdout_fens]
+    if select > len(training_rows):
+        raise ValueError(
+            f"cannot select {select} positions from {len(training_rows)} after holdout"
+        )
+    selection_size = select
+    selected, strata = _stratified_selection(training_rows, selection_size, seed)
     high_rows = [row for row, _ in selected]
-    random_rows = random.Random(seed + 1).sample(rows, selection_size)
+    random_rows = random.Random(seed + 1).sample(training_rows, selection_size)
     selected_strata = {row.fen: stratum for row, stratum in selected}
 
     output.mkdir(parents=True, exist_ok=True)
     selections = {"high": high_rows, "random": random_rows}
+    if holdout_rows:
+        selections["holdout"] = holdout_rows
     for name, selection in selections.items():
         for label, records in (("low", low), ("medium", medium), ("deep", deep)):
             write_records(
@@ -331,7 +347,7 @@ def mine(
                             "stratum": (
                                 selected_strata[row.fen]
                                 if name == "high"
-                                else "random-control"
+                                else f"{name}-control"
                             ),
                             "quiet": row.quiet,
                             "mate": row.mate,
@@ -343,7 +359,17 @@ def mine(
                     + "\n"
                 )
 
-    buckets = _difficulty_buckets(rows)
+    population_buckets = _difficulty_buckets(rows)
+    bucket_by_fen = {
+        row.fen: name
+        for name, bucket_rows in population_buckets.items()
+        for row in bucket_rows
+    }
+    bucket_source = holdout_rows or rows
+    buckets = {
+        name: [row for row in bucket_source if bucket_by_fen[row.fen] == name]
+        for name in population_buckets
+    }
     bucket_directory = output / "buckets"
     bucket_directory.mkdir(parents=True, exist_ok=True)
     for name, bucket_rows in buckets.items():
@@ -370,6 +396,8 @@ def mine(
 
     report: dict[str, object] = {
         "positions": len(rows),
+        "training_pool": len(training_rows),
+        "holdout": len(holdout_rows),
         "selected_high": selection_size,
         "selected_random": selection_size,
         "ranking_margin": ranking_margin,
@@ -377,10 +405,16 @@ def mine(
         "selection_strata": strata,
         "high_fen_sha256": _fen_digest(high_rows),
         "random_fen_sha256": _fen_digest(random_rows),
+        "holdout_fen_sha256": _fen_digest(holdout_rows),
         "high_random_overlap": len(
             {row.fen for row in high_rows} & {row.fen for row in random_rows}
         ),
-        "difficulty_buckets": {name: len(bucket_rows) for name, bucket_rows in buckets.items()},
+        "difficulty_buckets_population": {
+            name: len(bucket_rows) for name, bucket_rows in population_buckets.items()
+        },
+        "difficulty_buckets_holdout": {
+            name: len(bucket_rows) for name, bucket_rows in buckets.items()
+        },
         "low_to_medium": summary_for(1),
         "medium_to_deep": summary_for(2),
         "inputs": {
@@ -404,9 +438,12 @@ def main() -> None:
     parser.add_argument("--select", type=int, required=True)
     parser.add_argument("--ranking-margin", type=float, default=0.02)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--holdout", type=int, default=0)
     arguments = parser.parse_args()
-    if arguments.select < 1 or arguments.ranking_margin < 0:
-        parser.error("--select must be positive and --ranking-margin non-negative")
+    if arguments.select < 1 or arguments.ranking_margin < 0 or arguments.holdout < 0:
+        parser.error(
+            "--select must be positive; --ranking-margin and --holdout must be non-negative"
+        )
     report = mine(
         arguments.low,
         arguments.medium,
@@ -415,6 +452,7 @@ def main() -> None:
         select=arguments.select,
         ranking_margin=arguments.ranking_margin,
         seed=arguments.seed,
+        holdout=arguments.holdout,
     )
     print(json.dumps(report, indent=2))
 
