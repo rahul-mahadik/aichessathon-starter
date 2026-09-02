@@ -33,17 +33,29 @@ class SparseValueNetwork(nn.Module):
         with torch.no_grad():
             self.feature.weight[PADDING_INDEX].zero_()
 
-    def forward(self, features: torch.Tensor, turns: torch.Tensor) -> torch.Tensor:
-        """Evaluate ``(..., 2, 32)`` sparse indices from the side to move."""
-        accumulator = self.feature(features).sum(dim=-2) + self.feature_bias
-        white = accumulator[..., 0, :]
-        black = accumulator[..., 1, :]
-        turn = turns.bool().unsqueeze(-1)
-        mover = torch.where(turn, white, black)
-        opponent = torch.where(turn, black, white)
+    def _head(self, mover: torch.Tensor, opponent: torch.Tensor) -> torch.Tensor:
         hidden = torch.relu(self.hidden_one(torch.cat((mover, opponent), dim=-1)))
         hidden = torch.relu(self.hidden_two(hidden))
         return torch.tanh(self.output(hidden)).squeeze(-1)
+
+    def forward_with_flipped_turns(
+        self, features: torch.Tensor, turns: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate actual and turn-flipped mover order with one sparse accumulation."""
+        accumulator = self.feature(features).sum(dim=-2) + self.feature_bias
+        white = accumulator[..., 0, :]
+        black = accumulator[..., 1, :]
+        white_to_move = self._head(white, black)
+        black_to_move = self._head(black, white)
+        turn = turns.bool()
+        prediction = torch.where(turn, white_to_move, black_to_move)
+        flipped = torch.where(turn, black_to_move, white_to_move)
+        return prediction, flipped
+
+    def forward(self, features: torch.Tensor, turns: torch.Tensor) -> torch.Tensor:
+        """Evaluate ``(..., 2, 32)`` sparse indices from the side to move."""
+        prediction, _ = self.forward_with_flipped_turns(features, turns)
+        return prediction
 
 
 def _quantize_int8(weights: np.ndarray) -> tuple[np.ndarray, np.float32]:
@@ -91,4 +103,3 @@ def export_quantized(
     }
     destination.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
     return report
-

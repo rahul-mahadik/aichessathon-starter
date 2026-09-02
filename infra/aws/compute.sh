@@ -299,6 +299,7 @@ case "${1:-help}" in
   launch-gpu-spot) launch gpu spot "${2:-1}" ;;
   status) status ;;
   budget-status) budget_status ;;
+  register-budget-action) register_hard_stop_action ;;
   quota) gpu_quota ;;
   connect)
     require_managed_instance "${2:?instance id required}"
@@ -325,6 +326,7 @@ case "${1:-help}" in
     echo "Commands: deploy, launch-cpu [COUNT], launch-cpu-spot [COUNT],"
     echo "          launch-teacher [COUNT], launch-teacher-spot [COUNT],"
     echo "          launch-gpu [COUNT], launch-gpu-spot [COUNT], status, budget-status,"
+    echo "          register-budget-action,"
     echo "          quota, outputs, connect INSTANCE, start INSTANCE, stop INSTANCE, terminate INSTANCE"
     ;;
 esac

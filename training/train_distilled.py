@@ -220,8 +220,9 @@ def evaluate(
     model.eval()
     with torch.inference_mode():
         for batch in batches:
-            predictions = model(batch["features"], batch["turns"])
-            flipped_predictions = model(batch["features"], ~batch["turns"])
+            predictions, flipped_predictions = model.forward_with_flipped_turns(
+                batch["features"], batch["turns"]
+            )
             loss, metrics = losses(
                 predictions,
                 flipped_predictions,
@@ -318,8 +319,9 @@ def main() -> None:
         batch_count = 0
         for batch in batches:
             optimizer.zero_grad(set_to_none=True)
-            predictions = model(batch["features"], batch["turns"])
-            flipped_predictions = model(batch["features"], ~batch["turns"])
+            predictions, flipped_predictions = model.forward_with_flipped_turns(
+                batch["features"], batch["turns"]
+            )
             loss, _ = losses(
                 predictions,
                 flipped_predictions,

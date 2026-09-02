@@ -166,6 +166,15 @@ class DistillationTests(unittest.TestCase):
             actual = QuantizedEvaluator(path).raw_value(board)
         self.assertAlmostEqual(actual, expected, delta=0.02)
 
+    def test_training_reuses_accumulator_for_turn_flip(self) -> None:
+        torch.manual_seed(4)
+        model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        features = torch.as_tensor(encode_board(chess.Board())).long().unsqueeze(0)
+        turns = torch.tensor([True])
+        direct, flipped = model.forward_with_flipped_turns(features, turns)
+        self.assertTrue(torch.equal(direct, model(features, turns)))
+        self.assertTrue(torch.equal(flipped, model(features, ~turns)))
+
     def test_antisymmetric_runtime_flips_with_turn(self) -> None:
         torch.manual_seed(5)
         model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
