@@ -31,10 +31,16 @@ fi
 
 mkdir -p "$WORK_DIRECTORY/input" "$WORK_DIRECTORY/output" "$WORK_DIRECTORY/logs"
 cd "$REPOSITORY"
-sudo bash infra/aws/install-stockfish.sh
-"$UV_BIN" venv --python 3.12 "$WORK_DIRECTORY/venv"
-"$UV_BIN" pip install --python "$WORK_DIRECTORY/venv/bin/python" \
-  -r training/requirements-teacher-aws.txt
+if [[ ! -x "$STOCKFISH_BIN" ]]; then
+  sudo bash infra/aws/install-stockfish.sh
+fi
+if [[ ! -x "$WORK_DIRECTORY/venv/bin/python" ]]; then
+  "$UV_BIN" venv --python 3.12 "$WORK_DIRECTORY/venv"
+fi
+if ! "$WORK_DIRECTORY/venv/bin/python" -c 'import chess' >/dev/null 2>&1; then
+  "$UV_BIN" pip install --python "$WORK_DIRECTORY/venv/bin/python" \
+    -r training/requirements-teacher-aws.txt
+fi
 
 run_shard() {
   local shard_number="$1" shard_name input_path output_path log_path output_uri
