@@ -213,13 +213,13 @@ position shards across eight 32-vCPU workers:
 ```bash
 DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-corpus.sh
 
-TEACHER_RUN_ID=phase-c-20260902a TEACHER_TIER=medium TEACHER_NODES=100000 \
-TEACHER_SHARDS=2250 TEACHER_WORKER_COUNT=8 TEACHER_WORKER_INDEX=0 \
-TEACHER_PARALLELISM=32 bash infra/aws/teacher-worker.sh
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-label.sh 0
 ```
 
-Run one worker index from 0 through 7. Once all raw shards exist, build the exact 2M and 7M
-components and copy the retained Phase B 1M component/model into the Phase C namespace:
+Run one worker index from 0 through 7. Workers 1-7 shut down after their assigned labels upload.
+Worker 0 waits for all raw shards, builds the exact 2M and 7M components, copies the retained
+Phase B 1M component/model into the Phase C namespace, and then shuts down. The preparation step
+can also be resumed directly:
 
 ```bash
 DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-prepare.sh
