@@ -1,7 +1,7 @@
 # AI Chessathon Experiment Report
 
-Last updated: 2026-09-01 (America/Los_Angeles)  
-Experiment run: `pilot-20260831a`  
+Last updated: 2026-09-02 (America/Los_Angeles)
+Experiment runs: `pilot-20260831a`, `scale-20260901a`
 Working branch: `codex/environment-setup`
 
 ## Executive summary
@@ -43,6 +43,11 @@ mixed but positive: `combined` is the best student on value error, `fast-top` is
 pairwise ordering, and the fallback remains best on exact top-move agreement. The weights therefore
 contain real Stockfish signal, but not yet in a form that improves alpha-beta move choice.
 
+A train-time correctness pass added antisymmetry loss and four-times ranking weight for pairs
+involving the teacher's top three moves. It worked mechanically but did not improve the 110k-scale
+fixed-node result. The project is therefore running one deliberately bounded 10x experiment that
+also changes the information content of the labels; further scaling remains conditional.
+
 ## Evaluation framework
 
 | Test | Control | Question | Current state |
@@ -79,6 +84,15 @@ Durable artifacts:
 - Models: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/pilot-20260831a/models/`
 - Benchmarks: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/pilot-20260831a/benchmarks/`
 - Unseen evaluator holdout and results: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/eval-20260901a/`
+- Scale corpus and traces: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/scale-20260901a/`
+
+### Scale experiment in progress
+
+The disjoint Phase B corpus excludes the original 110,000 training positions and the 2,004
+evaluator-holdout/placeholder positions at the model-visible feature level. It contains 1,000,000
+medium positions plus a 200,000-position depth-mining pool, split into 256 shards per tier. The
+same mining positions receive 10k, 100k, and 1M-node MultiPV labels. A retained miner then selects
+the 100,000 positions with the largest 100k-to-1M value/ranking change for deep training.
 
 ## Training and diagnostic metrics
 
@@ -89,6 +103,8 @@ Durable artifacts:
 | `fast-top` | 100k medium | 32/32/16 | 1.18 MB | 60.43% | 31.82% | 38.30% | Rejected for wall clock |
 | `fast-top-antisym` | existing `fast-top` weights | 32/32/16 | 1.18 MB | n/a | n/a | 35.48% | Better than direct mode, still rejected |
 | `full-top` | 100k medium | 128/64/32 | 4.91 MB | 60.32% | 30.81% | 38.51% | Rejected for wall clock |
+| `corrected-64` | 100k medium + 10k deep | 64/48/24 | 2.58 MB | 61.49% | 32.51% | not measured | No fixed-node gain |
+| `corrected-128` | 100k medium + 10k deep | 128/64/32 | 5.12 MB | 60.99% | 31.98% | not measured | Matches prior fixed-node best |
 
 The 12,500-position diagnostic used retained medium-tier records containing 94,491 Stockfish
 candidate positions. Because that shard mixes examples used for fitting with the deterministic
@@ -113,12 +129,15 @@ is not a criterion in this experiment.
 | `fast-top` | 0.3831 | 0.4551 | 0.3851 | 0.4459 | **62.00%** | 29.50% |
 | `full-top` | 0.3988 | 0.4734 | 0.3956 | 0.4678 | 61.52% | 30.55% |
 | `fast-top-antisym` | 0.3877 | 0.4664 | 0.3830 | 0.4608 | 60.86% | 28.85% |
+| `corrected-64` | 0.4387 | 0.5233 | 0.4307 | 0.5165 | 61.91% | 30.85% |
+| `corrected-128` | 0.4503 | 0.5389 | 0.4465 | 0.5348 | 61.34% | 31.20% |
 
 This establishes **partial distillation success** independent of runtime. All students improve
-pairwise ordering by 8.8 to 10.1 percentage points and reduce absolute value error. `combined` also
-improves both root and candidate MSE. However, every student loses 3.5 to 6.0 percentage points of
-exact top-move agreement. The students have learned the teacher's broad value landscape, but the
-loss and representation do not concentrate that knowledge strongly enough on the best move.
+pairwise ordering substantially, and the initial models reduce absolute value error; `combined`
+also improves both root and candidate MSE. The corrected pilot regresses on value error while only
+slightly improving top-move agreement over `fast-top`. Every student remains below the fallback's
+34.0% exact top-move agreement. The students have learned the teacher's broad value landscape, but
+the loss and representation do not concentrate that knowledge strongly enough on the best move.
 
 ### Runtime diagnostic (not part of the pure evaluator test)
 
@@ -144,6 +163,8 @@ search implementation and node ceiling.
 | `medium` | 12.50% / -338 Elo | 15.63% / -293 Elo | 15.63% / -293 Elo |
 | `combined` | 15.63% / -293 Elo | 3.13% / -597 Elo | 9.38% / -394 Elo |
 | `fast-top` | 18.75% / -255 Elo | 0.00% / unbounded | 12.50% / -338 Elo |
+| `corrected-64` | 12.50% / -338 Elo | not run | not run |
+| `corrected-128` | 18.75% / -255 Elo | not run | not run |
 
 The first sweep uses more games at cheap node budgets and fewer games at 100k, then expands any
 promising cell. All nine cells disabled clock enforcement, used the same node ceiling on both
@@ -175,32 +196,38 @@ model SHA-256 hashes.
 ## AWS execution and guardrails
 
 - Region: `us-east-1`; profile: `aichessathon`.
-- Account-level monthly AWS Budget: `$200` (`aichessathon-monthly-guardrail`). It is a visibility
-  guardrail, not a hard resource stop.
+- Project-tagged monthly operating target: `$200` (`aichessathon-monthly-target`).
+- Project-tagged emergency budget: `$400` (`aichessathon-monthly-emergency-stop`) with an automatic
+  SSM action targeting active project EC2 instances.
+- An atomic DynamoDB reservation gate charges every launch its worst-case six-hour cost before EC2
+  starts and refuses launches above `$400`. AWS billing data is delayed, so this reservation gate,
+  not AWS Budgets alone, is the immediate control.
 - EC2 workers have a six-hour safety timer, encrypted disposable volumes, project/workload tags,
   and an instance role instead of static AWS credentials.
-- Teacher generation used one `c7i.2xlarge` Spot worker.
+- Pilot teacher generation used one `c7i.2xlarge` Spot worker.
+- Phase B uses eight `c7i.8xlarge` workers: 256 vCPUs total, matching the regional quota.
 - Training used short `g6.xlarge` and `g5.xlarge` on-demand sessions.
 - Benchmarks use disposable `c7i.2xlarge` workers and terminate after reports are retained.
-- The holdout labeler and all project GPU and benchmark workers are terminated. No project EC2
-  compute is active.
+- The corrected-model GPU and benchmark worker are terminated. Eight disposable Phase B teacher
+  workers are active and will terminate after the label ladder or the six-hour safety timer.
 - Two untagged stopped instances created in April, each with an attached 16 GB `gp3` volume, remain
   in the account. They predate this project and were not modified.
 
-Project-tagged instance lifecycle events give a conservative engineering estimate below
-approximately `$20`, excluding negligible S3 request and storage charges. Recent usage has not yet
-posted in Cost Explorer, so this is not a billing statement.
+The reservation ledger currently authorizes `$156.50` of worst-case monthly project spend,
+including a conservative `$20` baseline for prior runs. This is intentionally higher than expected
+actual cost because reservations are not released when workers finish early.
 
-**Account-level budget warning:** the `$200` budget currently reports `$0` September actual spend
-but a `$265.31` forecast. Cost Explorer reports approximately `$252.74` account-wide for August,
-including `$243.96` of EC2 compute, `$5.08` of EC2 Other, and `$3.70` of VPC charges. Those totals
-are not isolated to the chessathon tags. The budget is therefore useful as an account alarm, but it
-cannot prove project spend or enforce the intended project-only cap.
+**Historical account warning:** before project-tag filtering was activated, the account-wide budget
+reported a `$265.31` forecast. Cost Explorer reports approximately `$252.74` account-wide for
+August, including `$243.96` of EC2 compute, `$5.08` of EC2 Other, and `$3.70` of VPC charges. The
+new budgets filter on the now-active `Project` cost-allocation tag; the older account totals remain
+separate from the project reservation ledger.
 
 ## Repository work completed
 
 - AWS CloudFormation for private S3 artifacts, instance role, CPU/GPU launch templates, tagging,
-  auto-stop, and the `$200` budget.
+  auto-stop, project-tagged `$200`/`$400` budgets, an automatic EC2 stop action, and an atomic
+  worst-case launch ledger.
 - Resumable, sharded Stockfish teacher workers with exact corpus manifests and SHA-256 hashes.
 - Teacher trace schema, validation, dataset construction, sparse training, quantized export, and
   Numba runtime.
@@ -210,6 +237,8 @@ cannot prove project spend or enforce the intended project-only cap.
 - Paired, color-swapped benchmark reports with confidence intervals and Elo estimates.
 - Clock-free, exact-node benchmark mode and a complete first 1k/10k/100k sweep.
 - Feature-level holdout exclusion and a separate 2,000-position, deep-labeled evaluator corpus.
+- Train-time antisymmetry loss, top-k-weighted ranking, and sparse-accumulator reuse.
+- Paired-depth disagreement mining for identical 10k/100k/1M teacher positions.
 - Benchmark provenance including Git revision and model hashes.
 
 ## Decision gate and next work
@@ -221,8 +250,9 @@ The three experiments now support a narrower diagnosis:
 3. Inference speed compounds the problem for the larger networks under a wall clock, but it is not
    the primary explanation because the students already lose the fixed-node test.
 
-The next experiment should target the evaluator-search boundary rather than immediately buy more
-labels: train side-to-move antisymmetry into the loss, weight the best few candidates more heavily,
-and test shallow tactical/quiet subsets at fixed depth and fixed nodes. Scale data only after one of
-those changes improves exact top-move agreement and at least one fixed-node cell. The handcrafted
-evaluator remains the submission default in the meantime.
+Train-time antisymmetry and top-k weighting did not improve the 110k-scale fixed-node cell, so those
+changes alone are insufficient. Phase B is the bounded test of the remaining data-scale and
+information-selection hypotheses: 1M medium labels plus 100k selected deep-disagreement labels.
+Proceed to 10M/1M or an explicit policy head only if Phase B improves unseen top-k agreement and at
+least one fixed-node cell. The handcrafted evaluator remains the submission default in the
+meantime.
