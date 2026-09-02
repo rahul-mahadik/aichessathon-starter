@@ -109,23 +109,25 @@ def depth_distance(
     shallow_values = _candidate_values(shallower)
     deep_values = _candidate_values(deeper)
     common = sorted(set(shallow_values) & set(deep_values))
-    if not common:
-        raise ValueError(f"teacher traces share no candidates for {shallower.fen}")
-
-    candidate_value_mae = mean(
-        abs(shallow_values[move] - deep_values[move]) for move in common
-    )
-    discordant = 0
-    comparable = 0
-    for first_index, first in enumerate(common):
-        for second in common[first_index + 1 :]:
-            shallow_delta = shallow_values[first] - shallow_values[second]
-            deep_delta = deep_values[first] - deep_values[second]
-            if abs(shallow_delta) <= ranking_margin or abs(deep_delta) <= ranking_margin:
-                continue
-            comparable += 1
-            discordant += int(shallow_delta * deep_delta < 0)
-    ranking_disagreement = discordant / comparable if comparable else 0.0
+    if common:
+        candidate_value_mae = mean(
+            abs(shallow_values[move] - deep_values[move]) for move in common
+        )
+        discordant = 0
+        comparable = 0
+        for first_index, first in enumerate(common):
+            for second in common[first_index + 1 :]:
+                shallow_delta = shallow_values[first] - shallow_values[second]
+                deep_delta = deep_values[first] - deep_values[second]
+                if abs(shallow_delta) <= ranking_margin or abs(deep_delta) <= ranking_margin:
+                    continue
+                comparable += 1
+                discordant += int(shallow_delta * deep_delta < 0)
+        ranking_disagreement = discordant / comparable if comparable else 0.0
+    else:
+        # Disjoint MultiPV sets are a maximal decision-level disagreement, not bad data.
+        candidate_value_mae = 2.0
+        ranking_disagreement = 1.0
     root_value_delta = abs(
         score_to_value(shallower.root_score) - score_to_value(deeper.root_score)
     )

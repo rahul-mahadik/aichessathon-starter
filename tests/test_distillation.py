@@ -147,6 +147,34 @@ class DistillationTests(unittest.TestCase):
         self.assertEqual(distance.ranking_disagreement, 1.0)
         self.assertGreater(distance.distance, 2.0)
 
+    def test_depth_distance_treats_disjoint_candidates_as_disagreement(self) -> None:
+        shallow = self.record()
+        score = TeacherScore(cp=-35, mate=None, wdl=(200, 500, 300))
+        deep = TeacherRecord(
+            fen=shallow.fen,
+            teacher=shallow.teacher,
+            node_budget=1_000_000,
+            depth_budget=None,
+            multipv=1,
+            root_score=score,
+            candidates=(
+                Candidate(
+                    move="d2d4",
+                    score=score,
+                    pv=(),
+                    depth=20,
+                    seldepth=28,
+                    nodes=1_000_000,
+                ),
+            ),
+            best_move="d2d4",
+        )
+        distance = depth_distance(shallow, deep)
+        self.assertEqual(distance.common_candidates, 0)
+        self.assertEqual(distance.candidate_value_mae, 2.0)
+        self.assertEqual(distance.ranking_disagreement, 1.0)
+        self.assertTrue(distance.top_move_changed)
+
     def test_depth_miner_emits_matched_ablation_controls(self) -> None:
         boards: list[chess.Board] = []
         for move in (None, "e2e4", "d2d4", "c2c4", "g1f3", "b2b3"):
