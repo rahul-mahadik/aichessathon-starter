@@ -202,7 +202,10 @@ DISTILL_OPPONENT_MODEL_NAME=medium BENCH_ROUNDS=10 \
 Phase C deliberately separates research strength from wall-clock deployment. It forms a nested,
 feature-disjoint broad-medium dataset with 1M, 3M, and 10M cells, then independently scales the
 student to approximately 10, 20, and 40 MB on the 1M component. Every initial cell retains the
-Phase B loss, seed, batch size, and 10,000-step optimization budget.
+Phase B loss, seed, batch size, and 20-epoch recipe. The data axis consumes every shard on every
+epoch, so optimizer compute scales with the amount of data; this measures achievable strength
+rather than holding optimization cost fixed. The 1M capacity cells still have exactly 500 batches
+per epoch.
 
 Create and upload the 9M-position extension on one CPU worker, then label its 2,250 four-thousand
 position shards across eight 32-vCPU workers:

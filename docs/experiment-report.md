@@ -1,7 +1,7 @@
 # AI Chessathon Experiment Report
 
 Last updated: 2026-09-02 (America/Los_Angeles)
-Experiment runs: `pilot-20260831a`, `scale-20260901a`
+Experiment runs: `pilot-20260831a`, `scale-20260901a`, `phase-c-20260902a`
 Working branch: `codex/environment-setup`
 
 ## Executive summary
@@ -34,12 +34,19 @@ and 64/48/24 compressions score 36.72% and 25.47% respectively under the clock; 
 monotonically stronger. Current deployment leader: **handcrafted fallback**. Current fixed-node
 leader at 1k: **`phase-b-m`**.
 
+Phase C therefore treats research strength and deployment efficiency as separate tracks. The
+research track is now scaling the successful broad 100k-node label recipe across nested 1M, 3M,
+and 10M datasets, while independently scaling student capacity from 4.5 MB toward 10, 20, and
+40 MB. These first cells retain the Phase B objective, seed, batch size, and 20-epoch recipe. The
+data axis runs 20 complete passes, so optimizer compute scales with corpus size. Wall-clock tests
+remain a periodic deployability check, not a gate on this scaling study.
+
 ## Evaluation framework
 
 | Test | Control | Question | Current state |
 |---|---|---|---|
 | Pure evaluator | No search or time limit; genuinely unseen deep labels | Did the student learn Stockfish values and move ordering? | Complete on 2,000 positions |
-| Fixed-search | Same nodes per move; clocks disabled | Does the student improve the same search tree budget? | First 1k/10k/100k sweep complete |
+| Fixed-search | Same nodes per move; clocks disabled | Does the student improve the same search tree budget? | Phase B sweep complete; Phase C scaling active |
 | Tournament | Same wall clock and CPU | Does the complete engine win under competition constraints? | Complete for Phase B candidates |
 
 ## Data and teacher traces
@@ -71,6 +78,7 @@ Durable artifacts:
 - Benchmarks: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/pilot-20260831a/benchmarks/`
 - Unseen evaluator holdout and results: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/eval-20260901a/`
 - Scale corpus and traces: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/scale-20260901a/`
+- Phase C scaling artifacts: `s3://aichessathon-compute-artifactsbucket-snbc7mmwrkpq/artifacts/teacher/runs/phase-c-20260902a/`
 
 ## Phase B progress recap
 
@@ -404,6 +412,28 @@ separate from the project reservation ledger.
 - Paired-depth disagreement mining for identical 10k/100k/1M teacher positions.
 - Benchmark provenance including Git revision and model hashes.
 
+## Phase C scaling study: in progress
+
+Phase C is designed as two orthogonal axes so a data gain cannot be mistaken for a capacity gain:
+
+| Axis | Controlled cells | Held constant |
+|---|---|---|
+| Broad medium data | 1M, 3M, 10M positions at 100k Stockfish nodes | 128/64/32 student, Phase B objective, batch, seed, and 20 full epochs |
+| Student capacity | approximately 4.5, 10, 20, 40 MB on 1M positions | Phase B data and optimization recipe |
+
+The 9M-position extension is disjoint at the evaluator-visible feature level from the pilot,
+Phase B, and external evaluator corpora. It is divided into exact 2M and 7M components so every
+larger cell is a strict superset of the smaller one. It uses 2,250 shards of 4,000 positions to
+reduce the Phase B straggler penalty. Corpus generation and the first two larger-capacity students
+were dispatched on 2026-09-02. Pure evaluator and fixed 1k/10k-node tests will select follow-ups;
+wall-clock is deliberately not the initial research gate.
+
+The external calibration track will use DeepMind's Searchless Chess action-value checkpoints and
+node-limited Stockfish in one local, color-paired opening pool. Any Elo values from that pool will
+be reported only relative to its exact conditions. The main derived quantity is the Stockfish node
+budget whose pool Elo matches a distilled-plus-search system, not a claimed transfer to human or
+Lichess Elo.
+
 ## Decision gate and next work
 
 The three experiments now support a specific diagnosis:
@@ -420,7 +450,8 @@ The three experiments now support a specific diagnosis:
    their wall-clock ordering is not explained by size or one-ply metrics alone.
 
 The handcrafted evaluator remains the submission default. Do not spend the next compute tranche on
-more labels from the current deep-selection recipe. The next high-value experiments are a residual
-blend of handcrafted and learned values, search-trajectory supervision or an explicit policy head,
-and inference optimization that preserves the full model's capacity. Scale medium data beyond 1M
-only after a variant improves both the fixed-node and wall-clock gates.
+more labels from the current deep-selection recipe. For the research track, scale broad medium data
+and student capacity until the pure-evaluator and fixed-node curves visibly saturate. In parallel,
+prepare the Searchless Chess/Stockfish local reference pool. Only after identifying the strongest
+research model should the deployment track prioritize quantization, incremental evaluation,
+lower-level inference, caching, residual blending, or architecture changes under wall-clock.

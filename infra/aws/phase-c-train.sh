@@ -33,7 +33,7 @@ case "$CELL" in
     MODEL_NAME=phase-c-d1m-c40
     DATASETS=phase-c-base-1m
     EXPECTED_RECORDS=1000000
-    ARCHITECTURE=(--accumulator 1024 --hidden 512 --bottleneck 256)
+    ARCHITECTURE=(--accumulator 896 --hidden 448 --bottleneck 224)
     ;;
   *)
     echo "cell must be D3, D10, C10, C20, or C40" >&2
@@ -48,7 +48,6 @@ DISTILL_EXPECTED_RECORDS="$EXPECTED_RECORDS" \
   bash infra/aws/distill-gpu-run.sh \
     --epochs 20 \
     --batch-size 2048 \
-    --max-train-batches 500 \
     --learning-rate 0.001 \
     "${ARCHITECTURE[@]}" \
     --ranking-weight 0.5 \
