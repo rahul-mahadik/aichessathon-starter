@@ -192,6 +192,8 @@ deploy() {
 
 launch() {
   local workload="$1" market="${2:-on-demand}" count="${3:-1}" output_key instance_ids template_id tag_workload
+  local subnet_id="${AICHESSATHON_SUBNET_ID:-}"
+  local launch_location=()
   if [[ ! "$count" =~ ^[1-9][0-9]*$ ]] || (( count > 100 )); then
     echo "Count must be an integer from 1 to 100." >&2
     exit 2
@@ -204,6 +206,14 @@ launch() {
   esac
   tag_workload="${tag_workload:-training}"
   template_id="$(stack_output "$output_key")"
+  if [[ -n "$subnet_id" ]]; then
+    if [[ ! "$subnet_id" =~ ^subnet-[0-9a-f]+$ ]]; then
+      echo "AICHESSATHON_SUBNET_ID is not a valid subnet ID." >&2
+      exit 2
+    fi
+    aws_project ec2 describe-subnets --subnet-ids "$subnet_id" >/dev/null
+    launch_location=(--subnet-id "$subnet_id")
+  fi
   reserve_launch_budget "$workload" "$count"
 
   if [[ "$market" == "spot" ]]; then
@@ -212,6 +222,7 @@ launch() {
       --instance-initiated-shutdown-behavior terminate \
       --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}' \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Workload,Value=$tag_workload}]" \
+      "${launch_location[@]}" \
       --count "$count" --query 'Instances[].InstanceId' --output text)"; then
       release_launch_budget "$RESERVATION_AMOUNT"
       exit 1
@@ -225,6 +236,7 @@ launch() {
       --launch-template "LaunchTemplateId=$template_id,Version=\$Latest" \
       --instance-initiated-shutdown-behavior "$shutdown_behavior" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Workload,Value=$tag_workload}]" \
+      "${launch_location[@]}" \
       --count "$count" --query 'Instances[].InstanceId' --output text)"; then
       release_launch_budget "$RESERVATION_AMOUNT"
       exit 1
