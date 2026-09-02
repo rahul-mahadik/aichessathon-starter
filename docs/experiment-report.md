@@ -370,21 +370,24 @@ model SHA-256 hashes.
 - Pilot teacher generation used one `c7i.2xlarge` Spot worker.
 - Phase B label generation used eight `c7i.8xlarge` workers: 256 vCPUs total, matching the regional
   quota.
+- Phase C corpus construction completed on one retained `c7i.8xlarge`. Its 9M medium labels are
+  now running on eight `c7i.8xlarge` workers, again saturating the 256-vCPU Standard-instance
+  quota. Four are retained workers and four are new disposable teacher workers.
 - Pilot training used short `g6.xlarge` and `g5.xlarge` sessions. Phase B saturated one
   `g5.xlarge` A10G with four concurrent controlled models, then reused it for the two capacity
   variants.
+- Phase C reuses the `g5.xlarge` A10G. The 9.0 MB, 19.3 MB, and 41.5 MB capacity cells completed;
+  the largest cell used about 9.9 of 23.0 GiB GPU memory and remained below the 50 MB submission
+  limit. The worker is configured to stop after its upload.
 - Pilot benchmarks used disposable `c7i.2xlarge` workers. Phase B used four identical
   `c7i.8xlarge` workers for parallel fixed-node sweeps and a `c7i.4xlarge` of the same generation
   for wall-clock games; completed workers were reused for follow-up cells.
-- All eight Phase B teacher workers are terminated. Phase B training and evaluation workers were
-  stopped after their artifacts uploaded.
-- Six stopped project workers are retained for near-term reuse. They incur no EC2 compute charge
-  while stopped, but their encrypted EBS volumes continue to accrue storage charges and should be
-  terminated when follow-up experiments are finished.
+- All eight Phase B teacher workers are terminated. The retained Phase B training/evaluation
+  workers are temporarily active for Phase C; one retained `c7i.4xlarge` remains stopped.
 - Two untagged stopped instances created in April, each with an attached 16 GB `gp3` volume, remain
   in the account. They predate this project and were not modified.
 
-The reservation ledger currently authorizes `$239.00` of worst-case monthly project spend,
+The reservation ledger currently authorizes `$293.00` of worst-case monthly project spend,
 including a conservative `$20` baseline for prior runs. This is intentionally higher than expected
 actual cost because reservations are not released when workers finish early.
 
@@ -424,9 +427,27 @@ Phase C is designed as two orthogonal axes so a data gain cannot be mistaken for
 The 9M-position extension is disjoint at the evaluator-visible feature level from the pilot,
 Phase B, and external evaluator corpora. It is divided into exact 2M and 7M components so every
 larger cell is a strict superset of the smaller one. It uses 2,250 shards of 4,000 positions to
-reduce the Phase B straggler penalty. Corpus generation and the first two larger-capacity students
-were dispatched on 2026-09-02. Pure evaluator and fixed 1k/10k-node tests will select follow-ups;
-wall-clock is deliberately not the initial research gate.
+reduce the Phase B straggler penalty. Corpus generation completed on 2026-09-02 and eight CPU
+workers are labeling the extension. The first 256 shards, or 1,024,000 new positions, uploaded
+successfully. All three larger-capacity students completed. Pure evaluator and fixed 1k/10k-node
+tests will select follow-ups; wall-clock is deliberately not the initial research gate.
+
+The capacity cells below share the same 1M-position dataset, split, loss, seed, and number of
+optimizer steps. These are training-validation diagnostics, not the independent evaluator test or
+playing-strength results:
+
+| Model | Architecture | Export size | Validation MSE | Validation ranking | Validation top move | Status |
+|---|---|---:|---:|---:|---:|---|
+| `phase-b-m` | 128/64/32 | 4.47 MB | .3132 | 63.42% | 34.71% | Existing control |
+| `phase-c-d1m-c10` | 256/128/64 | 9.02 MB | .3073 | 64.01% | 34.86% | Complete |
+| `phase-c-d1m-c20` | 512/256/128 | 19.33 MB | .3053 | 64.62% | 35.12% | Complete |
+| `phase-c-d1m-c40` | 1024/512/256 | 41.53 MB | .3016 | 64.63% | 35.38% | Complete |
+
+All three larger models improve every listed internal metric monotonically, but no scientific claim
+is attached to that trend until they are evaluated against the untouched 1M-node holdout and in
+color-paired fixed-node games. A 30M data cell is intentionally gated on the 10M curve: launch it if
+the independent and fixed-node metrics are still improving rather than reserve that spend before
+the 10M evidence exists.
 
 The external calibration track will use DeepMind's Searchless Chess action-value checkpoints and
 node-limited Stockfish in one local, color-paired opening pool. Any Elo values from that pool will
