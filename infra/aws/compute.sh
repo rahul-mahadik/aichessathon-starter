@@ -193,6 +193,7 @@ deploy() {
 launch() {
   local workload="$1" market="${2:-on-demand}" count="${3:-1}" output_key instance_ids template_id tag_workload
   local subnet_id="${AICHESSATHON_SUBNET_ID:-}"
+  local instance_type="${AICHESSATHON_INSTANCE_TYPE:-}"
   if [[ ! "$count" =~ ^[1-9][0-9]*$ ]] || (( count > 100 )); then
     echo "Count must be an integer from 1 to 100." >&2
     exit 2
@@ -206,15 +207,27 @@ launch() {
   tag_workload="${tag_workload:-training}"
   template_id="$(stack_output "$output_key")"
   if [[ -n "$subnet_id" ]]; then
+    if [[ "$workload" != "gpu" ]]; then
+      echo "AICHESSATHON_SUBNET_ID is currently supported only by the GPU template." >&2
+      exit 2
+    fi
     if [[ ! "$subnet_id" =~ ^subnet-[0-9a-f]+$ ]]; then
       echo "AICHESSATHON_SUBNET_ID is not a valid subnet ID." >&2
       exit 2
     fi
     aws_project ec2 describe-subnets --subnet-ids "$subnet_id" >/dev/null
   fi
+  if [[ -n "$instance_type" && ! "$instance_type" =~ ^[a-z0-9][a-z0-9.]+$ ]]; then
+    echo "AICHESSATHON_INSTANCE_TYPE is not a valid EC2 instance type." >&2
+    exit 2
+  fi
   run_instances() {
-    if [[ -n "$subnet_id" ]]; then
+    if [[ -n "$subnet_id" && -n "$instance_type" ]]; then
+      aws_project ec2 run-instances "$@" --subnet-id "$subnet_id" --instance-type "$instance_type"
+    elif [[ -n "$subnet_id" ]]; then
       aws_project ec2 run-instances "$@" --subnet-id "$subnet_id"
+    elif [[ -n "$instance_type" ]]; then
+      aws_project ec2 run-instances "$@" --instance-type "$instance_type"
     else
       aws_project ec2 run-instances "$@"
     fi
