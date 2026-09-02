@@ -10,44 +10,29 @@ This report now separates three different questions: pure evaluator imitation on
 fixed-node search quality, and wall-clock tournament strength. Earlier revisions conflated these
 layers and moved too quickly from trace metrics to deployment conclusions.
 
-The wall-clock result is clear: the initial distilled evaluators are not submission candidates. In
-320 paired games each, the medium-only model scored 16.1% against the handcrafted fallback and the
-combined medium-plus-deep model scored 15.5%. This does **not** establish that distillation failed;
-it measures evaluator knowledge, inference cost, and search interaction together.
+The initial 110,000-position students were not submission candidates. Their best wall-clock score
+was 22.19% against the handcrafted fallback, and they also lost when both engines received the same
+node budget. That result mixed evaluator knowledge, inference cost, and search interaction, so it
+did not by itself disprove distillation.
 
-Evaluator and search diagnostics identified three separate effects:
+Phase B changes the research conclusion. On a genuinely unseen 2,000-position, 1M-node teacher
+set, all four scaled students beat the fallback on value error and pairwise ordering. The
+medium-only `phase-b-m` also reaches 34.5% exact top-move agreement versus 34.0% for the fallback.
+At exactly 1,000 search nodes per move it scores 65.63% over 320 paired games, approximately +112
+Elo with a +84 to +142 Elo interval. This is clear evidence that the distilled evaluator can make a
+fixed shallow search tree stronger.
 
-1. The original full-size NN evaluator was about 1.8 times slower locally and completed one fewer
-   search ply in the same time budget.
-2. On a fresh feature-disjoint holdout, every student ranked arbitrary candidate pairs better than
-   the fallback, but every student selected Stockfish's exact top candidate less often.
-3. The current students also lose when both engines receive exactly the same number of search
-   nodes, so inference speed is not the only problem.
+The controlled data ablation rejects the current deep-mining recipe. At 1k nodes, random-deep,
+selected-medium, and selected-deep additions score 56.25%, 50.00%, and 43.75% respectively. Their
+10k and directional 100k results show the same ordering. Deeper labels slightly improve broad
+one-ply ordering but reduce exact top-move agreement and search strength; medium-only breadth is
+the useful signal at this scale.
 
-A second controlled experiment therefore added an explicit top-move objective and trained a model
-with a smaller accumulator. The new `fast-top` model is 1.18 MB, matches or slightly exceeds the
-fallback's local evaluation throughput, reaches the same search depth, and selects Stockfish's top
-candidate on 38.30% of a mixed training/validation trace shard versus 34.71% for the fallback.
-However, it still scored only 15.2% against fallback in paired games. This disproves one-ply
-top-candidate accuracy as a sufficient promotion metric for the current alpha-beta integration.
-
-Turn-flip diagnostics then found a negamax integration violation: the learned evaluators did not
-enforce antisymmetry when mover and opponent inputs swapped. On 5,000 positions, `fast-top` had a
-mean `|v + v_flipped|` of 0.269 on a -1 to 1 scale, and 18.0% of pairs retained the same sign. An
-optimized inference mode now reuses the sparse accumulator and antisymmetrizes only the dense head.
-It retains search depth 4 and improved the wall-clock score from 15.2% to 22.2%, but it still loses
-decisively to the fallback.
-
-Current deployment and fixed-node leader: **handcrafted fallback**. The pure evaluator result is
-mixed but positive: `combined` is the best student on value error, `fast-top` is the best on broad
-pairwise ordering, and the fallback remains best on exact top-move agreement. The weights therefore
-contain real Stockfish signal, but not yet in a form that improves alpha-beta move choice.
-
-A train-time correctness pass added antisymmetry loss and four-times ranking weight for pairs
-involving the teacher's top three moves. It worked mechanically but did not improve the 110k-scale
-fixed-node result. Phase B has now completed label generation, disagreement mining, clean holdout
-selection, and dataset construction for one deliberately bounded 10x experiment. Four controlled
-students are training; evaluator and fixed-node conclusions remain conditional on their results.
+Deployment remains a separate negative result. `phase-b-m` improves the wall-clock score to 42.34%
+(about -54 Elo), far above the prior students but still decisively below the fallback. The 32/32/16
+and 64/48/24 compressions score 36.72% and 25.47% respectively under the clock; smaller is not
+monotonically stronger. Current deployment leader: **handcrafted fallback**. Current fixed-node
+leader at 1k: **`phase-b-m`**.
 
 ## Evaluation framework
 
@@ -55,7 +40,7 @@ students are training; evaluator and fixed-node conclusions remain conditional o
 |---|---|---|---|
 | Pure evaluator | No search or time limit; genuinely unseen deep labels | Did the student learn Stockfish values and move ordering? | Complete on 2,000 positions |
 | Fixed-search | Same nodes per move; clocks disabled | Does the student improve the same search tree budget? | First 1k/10k/100k sweep complete |
-| Tournament | Same wall clock and CPU | Does the complete engine win under competition constraints? | Complete for current variants |
+| Tournament | Same wall clock and CPU | Does the complete engine win under competition constraints? | Complete for Phase B candidates |
 
 ## Data and teacher traces
 
@@ -183,17 +168,16 @@ the run's `mined/phase-b-ablation/` prefix. Dataset conversion produced one 1,00
 component and three 100,000-record treatment components; the four training recipes compose these
 without duplicating the base data in S3.
 
-### Training and evaluation: in progress
+### Controlled training and evaluation: complete
 
 All four models use the corrected 128/64/32 architecture, seed 7, identical antisymmetry and
-top-move-aware losses, and exactly 500 optimizer steps in each of 20 epochs. The four jobs run
+top-move-aware losses, and exactly 500 optimizer steps in each of 20 epochs. The four jobs completed
 concurrently on one `g5.xlarge`: one process per vCPU, approximately 6.2 of 23 GiB device memory,
-and 99% aggregate A10G utilization. A prepared `c7i.8xlarge` will run the unconstrained
-pure-evaluator tests followed by equal-node 1k/10k/100k search tests. Equal-wall-clock tournaments
-remain gated on success in the first two experiments.
-
-Phase B data generation and preparation are complete. Distillation and evaluation are still in
-progress, so the run does not yet establish a chess-strength result.
+and 99% aggregate A10G utilization. Four `c7i.8xlarge` workers then ran the unconstrained evaluator
+tests and equal-node 1k/10k/100k search tests in parallel. The four-model controlled experiment is
+complete. Post-ablation follow-ups expanded the full model's 10k cell and trained 32/32/16 and
+64/48/24 medium-only capacity variants. Those architecture tests are reported separately and do
+not alter the controlled data-ablation conclusion.
 
 ## Training and diagnostic metrics
 
@@ -206,6 +190,12 @@ progress, so the run does not yet establish a chess-strength result.
 | `full-top` | 100k medium | 128/64/32 | 4.91 MB | 60.32% | 30.81% | 38.51% | Rejected for wall clock |
 | `corrected-64` | 100k medium + 10k deep | 64/48/24 | 2.58 MB | 61.49% | 32.51% | not measured | No fixed-node gain |
 | `corrected-128` | 100k medium + 10k deep | 128/64/32 | 5.12 MB | 60.99% | 31.98% | not measured | Matches prior fixed-node best |
+| `phase-b-m` | 1M medium | 128/64/32 | 4.47 MB | 63.42% | 34.71% | not measured | Phase B scale leader |
+| `phase-b-r-deep` | 1M medium + 100k random deep | 128/64/32 | 4.65 MB | 63.48% | 34.77% | not measured | Phase B control |
+| `phase-b-h-medium` | 1M medium + 100k selected medium | 128/64/32 | 4.48 MB | 63.35% | 34.30% | not measured | Phase B selection treatment |
+| `phase-b-h-deep` | 1M medium + 100k selected deep | 128/64/32 | 4.39 MB | 63.37% | 34.31% | not measured | Phase B depth treatment |
+| `phase-b-m-fast` | 1M medium | 32/32/16 | 1.17 MB | 62.69% | 34.50% | not measured | Fails 1k fixed-node gate |
+| `phase-b-m-mid` | 1M medium | 64/48/24 | 2.11 MB | 62.99% | 34.47% | not measured | Passes 1k fixed-node gate |
 
 The 12,500-position diagnostic used retained medium-tier records containing 94,491 Stockfish
 candidate positions. Because that shard mixes examples used for fitting with the deterministic
@@ -224,21 +214,45 @@ is not a criterion in this experiment.
 
 | Evaluator | Root MSE | Root MAE | Candidate MSE | Candidate MAE | Pairwise accuracy | Top-move agreement |
 |---|---:|---:|---:|---:|---:|---:|
-| Handcrafted fallback | 0.3856 | 0.4969 | 0.3803 | 0.4954 | 51.89% | **34.00%** |
+| Handcrafted fallback | 0.3856 | 0.4969 | 0.3803 | 0.4954 | 51.89% | 34.00% |
 | `medium` | 0.3922 | 0.4506 | 0.3834 | 0.4419 | 61.17% | 29.55% |
-| `combined` | **0.3804** | **0.4382** | **0.3747** | **0.4308** | 60.66% | 28.05% |
-| `fast-top` | 0.3831 | 0.4551 | 0.3851 | 0.4459 | **62.00%** | 29.50% |
+| `combined` | 0.3804 | 0.4382 | 0.3747 | 0.4308 | 60.66% | 28.05% |
+| `fast-top` | 0.3831 | 0.4551 | 0.3851 | 0.4459 | 62.00% | 29.50% |
 | `full-top` | 0.3988 | 0.4734 | 0.3956 | 0.4678 | 61.52% | 30.55% |
 | `fast-top-antisym` | 0.3877 | 0.4664 | 0.3830 | 0.4608 | 60.86% | 28.85% |
 | `corrected-64` | 0.4387 | 0.5233 | 0.4307 | 0.5165 | 61.91% | 30.85% |
 | `corrected-128` | 0.4503 | 0.5389 | 0.4465 | 0.5348 | 61.34% | 31.20% |
+| `phase-b-m` | 0.3354 | 0.4457 | 0.3328 | 0.4428 | 63.74% | **34.50%** |
+| `phase-b-r-deep` | 0.3322 | 0.4418 | 0.3238 | 0.4344 | 64.29% | 33.05% |
+| `phase-b-h-medium` | **0.3253** | **0.4368** | **0.3187** | **0.4316** | 64.22% | 32.65% |
+| `phase-b-h-deep` | 0.3283 | 0.4391 | 0.3229 | 0.4344 | **64.75%** | 32.40% |
+| `phase-b-m-fast` | 0.3360 | 0.4478 | 0.3265 | 0.4422 | 63.02% | 33.05% |
+| `phase-b-m-mid` | 0.3410 | 0.4485 | 0.3353 | 0.4450 | 63.31% | 33.15% |
 
-This establishes **partial distillation success** independent of runtime. All students improve
-pairwise ordering substantially, and the initial models reduce absolute value error; `combined`
-also improves both root and candidate MSE. The corrected pilot regresses on value error while only
-slightly improving top-move agreement over `fast-top`. Every student remains below the fallback's
-34.0% exact top-move agreement. The students have learned the teacher's broad value landscape, but
-the loss and representation do not concentrate that knowledge strongly enough on the best move.
+This establishes **distillation success** independent of runtime. All students improve pairwise
+ordering substantially, and the Phase B students beat the fallback on root and candidate value
+error. `phase-b-h-medium` has the best value imitation and `phase-b-h-deep` the best broad ordering,
+but both lose exact top-move agreement. `phase-b-m` is the first student to exceed the fallback's
+34.0% top-move agreement, reaching 34.5%. The ablation shows that deeper or
+information-selected labels do not automatically improve the decision-relevant metric.
+
+The mining holdout exposes the same distinction by difficulty. Each cell below is root MAE /
+pairwise accuracy / top-move agreement against the 1M-node teacher:
+
+| Evaluator | Easy | Medium | Deep | Unstable | Transitional |
+|---|---|---|---|---|---|
+| Handcrafted | .5473 / 55.68% / 46.50% | .4488 / 49.24% / 28.53% | .4282 / 48.94% / 21.50% | .3994 / 47.88% / 23.58% | .4894 / 51.04% / 32.54% |
+| `phase-b-m` | .4856 / 67.99% / 48.85% | .4024 / 62.39% / 25.20% | .3806 / 64.02% / 18.67% | .3644 / 59.82% / 19.26% | .4502 / 62.83% / 31.70% |
+| `phase-b-r-deep` | .4807 / 67.95% / 48.81% | .3932 / 62.85% / 25.62% | .3696 / 63.78% / 18.92% | .3573 / 59.65% / 19.34% | .4445 / 62.96% / 31.15% |
+| `phase-b-h-medium` | .4820 / 67.90% / 48.05% | .3910 / 63.00% / 25.20% | .3699 / 63.62% / 17.50% | .3587 / 60.05% / 19.13% | .4449 / 62.82% / 31.29% |
+| `phase-b-h-deep` | .4833 / 67.81% / 48.63% | .3936 / 62.99% / 25.69% | .3686 / 63.15% / 18.17% | .3582 / 59.48% / 20.27% | .4439 / 63.08% / 31.63% |
+| `phase-b-m-fast` | .4917 / 66.84% / 48.51% | .4029 / 61.43% / 25.62% | .3845 / 62.86% / 19.83% | .3676 / 59.19% / 19.22% | .4513 / 62.09% / 31.73% |
+| `phase-b-m-mid` | .4891 / 67.16% / 48.66% | .4060 / 61.44% / 25.76% | .3825 / 63.37% / 20.67% | .3673 / 58.94% / 19.26% | .4536 / 62.62% / 31.14% |
+
+All four students improve value error and pairwise ordering in every bucket. Their exact top-move
+advantage is confined to the easy bucket; all trail the handcrafted evaluator on the medium, deep,
+unstable, and transitional buckets. This is consistent with the fixed-node advantage shrinking as
+search grows.
 
 ### Runtime diagnostic (not part of the pure evaluator test)
 
@@ -259,20 +273,54 @@ The benchmark harness now supports an exact per-move node cap, disables chess-cl
 uses a 24-hour per-move watchdog only for crash containment. Candidate and control use the same
 search implementation and node ceiling.
 
-| Candidate vs fallback | 1k nodes (320 games) | 10k nodes (80 games) | 100k nodes (16 games) |
+| Candidate vs fallback | 1k nodes (320 games) | 10k nodes (80 games; `phase-b-m` 320) | 100k nodes (16 games) |
 |---|---:|---:|---:|
 | `medium` | 12.50% / -338 Elo | 15.63% / -293 Elo | 15.63% / -293 Elo |
 | `combined` | 15.63% / -293 Elo | 3.13% / -597 Elo | 9.38% / -394 Elo |
 | `fast-top` | 18.75% / -255 Elo | 0.00% / unbounded | 12.50% / -338 Elo |
 | `corrected-64` | 12.50% / -338 Elo | not run | not run |
 | `corrected-128` | 18.75% / -255 Elo | not run | not run |
+| `phase-b-m` | **65.63% / +112 Elo** | 46.88% / -22 Elo | 43.75% / -44 Elo |
+| `phase-b-r-deep` | 56.25% / +44 Elo | 50.00% / 0 Elo | 46.88% / -22 Elo |
+| `phase-b-h-medium` | 50.00% / 0 Elo | 40.63% / -66 Elo | 28.13% / -163 Elo |
+| `phase-b-h-deep` | 43.75% / -44 Elo | 37.50% / -89 Elo | 25.00% / -191 Elo |
+| `phase-b-m-fast` | 37.50% / -89 Elo | stopped at gate | stopped at gate |
+| `phase-b-m-mid` | 56.25% / +44 Elo | 46.88% / -22 Elo | not scheduled |
 
 The first sweep uses more games at cheap node budgets and fewer games at 100k, then expands any
-promising cell. All nine cells disabled clock enforcement, used the same node ceiling on both
-sides, and had zero failed terminations. The 100k cells are directional because they contain only
-16 games. No current student shows evidence that search compute was successfully amortized into
-the weights; the degradation at 10k also points to a depth/search interaction that deserves direct
-analysis.
+promising or ambiguous cell. Every cell disables clock enforcement, uses the same node ceiling on
+both sides, and has zero failed terminations. The 100k cells are directional because they contain
+only 16 games. `phase-b-m` is the first student to show clear fixed-search success: 65.63% over 320
+games at 1k nodes, with a 61.88%-69.37% score interval. Its expanded 320-game 10k result is 46.88%
+with a 42.34%-51.41% interval, statistically consistent with parity; its 100k result is directional.
+Adding random-deep, selected-medium, or selected-deep examples weakens the 1k result in that order.
+At this scale, medium-only breadth transfers to shallow search better than deeper or
+disagreement-selected supervision.
+
+The post-ablation `phase-b-m-fast` model preserves most one-ply metrics while reducing the artifact
+from 4.47 MB to 1.17 MB, but it scores only 37.50% at 1k nodes over 320 games. Its larger-node cells
+were stopped at the gate. Search-useful information is therefore sensitive to model capacity in a
+way that evaluator MAE and pairwise accuracy do not reveal.
+
+The 2.11 MB `phase-b-m-mid` midpoint recovers part of the lost search signal: it scores 56.25% at 1k
+nodes over 320 games, approximately +44 Elo with a +14 to +74 Elo interval. The resulting capacity
+frontier is +112 Elo for the 4.47 MB full model, +44 Elo for the 2.11 MB midpoint, and -89 Elo for
+the 1.17 MB fast model. The midpoint is inconclusive at 10k (46.88% over 80 games), matching the
+full model's initial result. Under the wall clock, however, the midpoint falls to 25.47%, compared
+with 42.34% for full and 36.72% for fast. Capacity, one-ply accuracy, fixed-node strength, and
+deployment strength are not monotonic across these architectures.
+
+Two direct, color-paired 1k-node comparisons remove common-opponent noise from the primary causal
+questions:
+
+| Candidate | Opponent | W-D-L | Score | Elo | 95% score interval | Conclusion |
+|---|---|---:|---:|---:|---:|---|
+| `phase-b-h-deep` | `phase-b-h-medium` | 0-200-120 | 31.25% | -137 | 28.59%-33.91% | 1M labels hurt versus 100k labels on the same positions |
+| `phase-b-h-deep` | `phase-b-r-deep` | 40-200-80 | 43.75% | -44 | 40.46%-47.04% | selected-hard positions hurt versus random positions at the same label depth |
+
+Both comparisons use antisymmetric inference for both students and report zero failures. The
+current data-mining hypothesis is rejected under this architecture and loss: deeper labels are
+actively harmful, and disagreement selection is worse than random deep sampling.
 
 ## Wall-clock tournament test
 
@@ -288,6 +336,9 @@ Every completed comparison used 20 rounds over eight openings with both colors, 
 | `full-top` | fallback | 16-27-277 | 9.22% | -397 | 6.47%-11.96% | Reject |
 | `fast-top` | `full-top` | 129-114-77 | 58.13% | +57 | 53.81%-62.44% | Smaller model wins |
 | `fast-top-antisym` | fallback | 35-72-213 | 22.19% | -218 | 18.44%-25.93% | Better, still reject |
+| `phase-b-m` | fallback | 107-57-156 | 42.34% | -54 | 37.44%-47.25% | Large improvement, still reject |
+| `phase-b-m-fast` | fallback | 78-79-163 | 36.72% | -95 | 32.19%-41.25% | Faster but loses search quality |
+| `phase-b-m-mid` | fallback | 45-73-202 | 25.47% | -187 | 21.47%-29.47% | Fixed-node gain does not survive clock |
 
 The first three benchmark reports were generated from independently verified commit `3de6dfe`.
 Their embedded Git field is `unknown` because SSM ran as root against an `ec2-user` checkout. This
@@ -297,6 +348,9 @@ model SHA-256 hashes.
 ## AWS execution and guardrails
 
 - Region: `us-east-1`; profile: `aichessathon`.
+- Credential warning: the refreshed local profile currently resolves to the AWS account root.
+  Replace it with an IAM Identity Center permission set before routine use; EC2 workers themselves
+  already use a scoped instance role and no static credentials.
 - Project-tagged monthly operating target: `$200` (`aichessathon-monthly-target`).
 - Project-tagged emergency budget: `$400` (`aichessathon-monthly-emergency-stop`) with an automatic
   SSM action targeting active project EC2 instances.
@@ -308,14 +362,21 @@ model SHA-256 hashes.
 - Pilot teacher generation used one `c7i.2xlarge` Spot worker.
 - Phase B label generation used eight `c7i.8xlarge` workers: 256 vCPUs total, matching the regional
   quota.
-- Training used short `g6.xlarge` and `g5.xlarge` on-demand sessions.
-- Benchmarks use disposable `c7i.2xlarge` workers and terminate after reports are retained.
-- All eight Phase B teacher workers are terminated. One `g5.xlarge` training worker and one reused
-  `c7i.8xlarge` evaluation worker are active for the controlled ablation.
+- Pilot training used short `g6.xlarge` and `g5.xlarge` sessions. Phase B saturated one
+  `g5.xlarge` A10G with four concurrent controlled models, then reused it for the two capacity
+  variants.
+- Pilot benchmarks used disposable `c7i.2xlarge` workers. Phase B used four identical
+  `c7i.8xlarge` workers for parallel fixed-node sweeps and a `c7i.4xlarge` of the same generation
+  for wall-clock games; completed workers were reused for follow-up cells.
+- All eight Phase B teacher workers are terminated. Phase B training and evaluation workers were
+  stopped after their artifacts uploaded.
+- Six stopped project workers are retained for near-term reuse. They incur no EC2 compute charge
+  while stopped, but their encrypted EBS volumes continue to accrue storage charges and should be
+  terminated when follow-up experiments are finished.
 - Two untagged stopped instances created in April, each with an attached 16 GB `gp3` volume, remain
   in the account. They predate this project and were not modified.
 
-The reservation ledger currently authorizes `$185.00` of worst-case monthly project spend,
+The reservation ledger currently authorizes `$239.00` of worst-case monthly project spend,
 including a conservative `$20` baseline for prior runs. This is intentionally higher than expected
 actual cost because reservations are not released when workers finish early.
 
@@ -345,15 +406,21 @@ separate from the project reservation ledger.
 
 ## Decision gate and next work
 
-The three experiments now support a narrower diagnosis:
+The three experiments now support a specific diagnosis:
 
-1. Distillation learned broad Stockfish value and ordering signal on unseen positions.
-2. That signal does not improve the current alpha-beta engine at an equal node count.
-3. Inference speed compounds the problem for the larger networks under a wall clock, but it is not
-   the primary explanation because the students already lose the fixed-node test.
+1. Distillation succeeds: every Phase B student improves unseen Stockfish value error and broad
+   ordering, and `phase-b-m` slightly improves exact top-move agreement.
+2. Medium-data scale creates useful search knowledge: `phase-b-m` is +112 Elo at a fixed 1k nodes.
+   The benefit disappears by 10k, so it is shallow-search amortization rather than a universal
+   evaluator upgrade.
+3. The current deep-mining recipe is counterproductive. On direct paired tests, 1M labels lose to
+   100k labels on the same hard positions, and selected-hard positions lose to random positions at
+   the same label depth.
+4. Deployment is still unsolved. Full, midpoint, and fast models all lose under the clock, and
+   their wall-clock ordering is not explained by size or one-ply metrics alone.
 
-Train-time antisymmetry and top-k weighting did not improve the 110k-scale fixed-node cell, so those
-changes alone are insufficient. Phase B's four controlled students are now training. Proceed to
-10M/1M or an explicit policy head only if a resulting student improves unseen top-k agreement and
-at least one fixed-node cell. The handcrafted evaluator remains the submission default in the
-meantime.
+The handcrafted evaluator remains the submission default. Do not spend the next compute tranche on
+more labels from the current deep-selection recipe. The next high-value experiments are a residual
+blend of handcrafted and learned values, search-trajectory supervision or an explicit policy head,
+and inference optimization that preserves the full model's capacity. Scale medium data beyond 1M
+only after a variant improves both the fixed-node and wall-clock gates.
