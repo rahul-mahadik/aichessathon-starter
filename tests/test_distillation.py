@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 import chess
@@ -12,7 +14,12 @@ from distill.build_dataset import build_parallel
 from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
 from distill.inspect_teacher import inspect
 from distill.mine_depth_disagreements import depth_distance, mine
-from distill.sample_gigafish import _valid_unique_positions, reservoir_sample, sample_corpus
+from distill.sample_gigafish import (
+    _download,
+    _valid_unique_positions,
+    reservoir_sample,
+    sample_corpus,
+)
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import QuantizedEvaluator
 from training.nnue import SparseValueNetwork, export_quantized
@@ -20,6 +27,23 @@ from training.train_distilled import Batch, losses
 
 
 class DistillationTests(unittest.TestCase):
+    def test_download_retries_rate_limits(self) -> None:
+        rate_limit = urllib.error.HTTPError(
+            "https://example.test/data", 429, "rate limited", {"Retry-After": "1"}, None
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "data.parquet"
+            with (
+                unittest.mock.patch(
+                    "distill.sample_gigafish.urllib.request.urlopen",
+                    side_effect=[rate_limit, io.BytesIO(b"payload")],
+                ),
+                unittest.mock.patch("distill.sample_gigafish.time.sleep") as sleep,
+            ):
+                _download("https://example.test/data", destination)
+            self.assertEqual(destination.read_bytes(), b"payload")
+            sleep.assert_called_once_with(1.0)
+
     def test_reservoir_sample_is_bounded_and_deterministic(self) -> None:
         rows = [str(index) for index in range(100)]
         first = reservoir_sample(rows, 10, seed=7)

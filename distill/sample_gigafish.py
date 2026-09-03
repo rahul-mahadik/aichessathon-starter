@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import random
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -16,6 +18,8 @@ import chess
 DATASET_REPOSITORY = "lukesalamone/gigafish-3.8b-d10"
 DATASET_REVISION = "47100399529ac17e9fdf2c8d0f49bfae89ae0c30"
 DEFAULT_SOURCE_SHARDS = (0, 1000, 2000, 3000)
+DOWNLOAD_ATTEMPTS = 10
+DOWNLOAD_BACKOFF_CAP_S = 60.0
 
 
 def reservoir_sample(rows: Iterable[str], sample_size: int, seed: int) -> list[str]:
@@ -40,10 +44,28 @@ def _download(url: str, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".partial")
     request = urllib.request.Request(url, headers={"User-Agent": "aichessathon-distill/1"})
-    with urllib.request.urlopen(request) as source, partial.open("wb") as target:
-        while chunk := source.read(1024 * 1024):
-            target.write(chunk)
-    partial.replace(destination)
+    for attempt in range(DOWNLOAD_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request) as source, partial.open("wb") as target:
+                while chunk := source.read(1024 * 1024):
+                    target.write(chunk)
+            partial.replace(destination)
+            return
+        except urllib.error.HTTPError as error:
+            if error.code != 429 and error.code < 500:
+                raise
+            retry_after = error.headers.get("Retry-After")
+            if attempt + 1 == DOWNLOAD_ATTEMPTS:
+                raise
+        except urllib.error.URLError:
+            retry_after = None
+            if attempt + 1 == DOWNLOAD_ATTEMPTS:
+                raise
+        try:
+            delay = float(retry_after) if retry_after is not None else 2.0**attempt
+        except ValueError:
+            delay = 2.0**attempt
+        time.sleep(min(DOWNLOAD_BACKOFF_CAP_S, max(1.0, delay)))
 
 
 def _parquet_rows(paths: list[Path]) -> Iterator[str]:
