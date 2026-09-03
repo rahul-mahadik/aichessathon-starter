@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKER_INDEX="${1:?worker index is required}"
+if (( $# == 0 )); then
+  echo "at least one worker index is required" >&2
+  exit 2
+fi
+WORKER_INDICES=("$@")
 RUN_ID="${DISTILL_RUN_ID:-phase-d-20260903a}"
 WORKER_COUNT="${TEACHER_WORKER_COUNT:-30}"
 SHARDS="${TEACHER_SHARDS:-22500}"
@@ -13,10 +17,16 @@ WAIT_SECONDS="${PHASE_D_WAIT_SECONDS:-30}"
 CORPUS_WAIT_LIMIT="${PHASE_D_CORPUS_WAIT_LIMIT:-480}"
 LABEL_WAIT_LIMIT="${PHASE_D_LABEL_WAIT_LIMIT:-480}"
 
-if ! [[ "$WORKER_INDEX" =~ ^[0-9]+$ ]] || (( WORKER_INDEX >= WORKER_COUNT )); then
-  echo "worker index must be between zero and WORKER_COUNT - 1" >&2
-  exit 2
-fi
+has_coordinator=0
+for worker_index in "${WORKER_INDICES[@]}"; do
+  if ! [[ "$worker_index" =~ ^[0-9]+$ ]] || (( worker_index >= WORKER_COUNT )); then
+    echo "worker index must be between zero and WORKER_COUNT - 1" >&2
+    exit 2
+  fi
+  if (( worker_index == 0 )); then
+    has_coordinator=1
+  fi
+done
 
 for ((attempt = 1; attempt <= CORPUS_WAIT_LIMIT; attempt++)); do
   if aws s3 ls "$RUN_PREFIX/corpus/manifest.json" >/dev/null 2>&1; then
@@ -30,22 +40,25 @@ for ((attempt = 1; attempt <= CORPUS_WAIT_LIMIT; attempt++)); do
   sleep "$WAIT_SECONDS"
 done
 
-worker_failed=0
-TEACHER_RUN_ID="$RUN_ID" \
-TEACHER_TIER=medium \
-TEACHER_NODES="$NODES" \
-TEACHER_SHARDS="$SHARDS" \
-TEACHER_WORKER_INDEX="$WORKER_INDEX" \
-TEACHER_WORKER_COUNT="$WORKER_COUNT" \
-TEACHER_PARALLELISM="$PARALLELISM" \
-TEACHER_SHUTDOWN=0 \
-  bash infra/aws/teacher-worker.sh || worker_failed=$?
+for worker_index in "${WORKER_INDICES[@]}"; do
+  worker_failed=0
+  TEACHER_RUN_ID="$RUN_ID" \
+  TEACHER_TIER=medium \
+  TEACHER_NODES="$NODES" \
+  TEACHER_SHARDS="$SHARDS" \
+  TEACHER_WORKER_INDEX="$worker_index" \
+  TEACHER_WORKER_COUNT="$WORKER_COUNT" \
+  TEACHER_PARALLELISM="$PARALLELISM" \
+  TEACHER_SHUTDOWN=0 \
+    bash infra/aws/teacher-worker.sh || worker_failed=$?
 
-if (( worker_failed )); then
-  sudo shutdown -h +1
-  exit "$worker_failed"
-fi
-if (( WORKER_INDEX != 0 )); then
+  if (( worker_failed )); then
+    sudo shutdown -h +1
+    exit "$worker_failed"
+  fi
+done
+
+if (( ! has_coordinator )); then
   sudo shutdown -h +1
   exit 0
 fi

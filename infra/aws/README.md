@@ -260,8 +260,10 @@ DISTILL_RUN_ID=phase-d-20260903a TEACHER_WORKER_COUNT=30 \
   bash infra/aws/phase-d-label.sh 0
 ```
 
-Run worker indices 0 through 29. Workers wait for the corpus, label at 100k Stockfish nodes, and
-shut down after uploading their shards. Worker 0 assembles the new 90M component and retains the
+Run worker indices 0 through 29. Multiple indices may be assigned sequentially to one machine,
+which permits a smaller fleet to cover all partitions while a quota increase is pending. Workers
+wait for the corpus, label at 100k Stockfish nodes, and shut down after uploading their shards.
+Worker 0 assembles the new 90M component and retains the
 three existing Phase C components, producing an exact 100M training set. Train the small, 20MB,
 and 40MB cells with `D100`, `D100C20`, and `D100C40`, respectively. The default five epochs and
 4,096 batch size give slightly more optimizer steps than the 10M/20-epoch cells while exposing the
