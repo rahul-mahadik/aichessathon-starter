@@ -146,8 +146,8 @@ require_managed_instance() {
 
 deploy() {
   local vpc_id subnet_id target_budget hard_budget
-  target_budget="${AICHESSATHON_TARGET_BUDGET:-200}"
-  hard_budget="${AICHESSATHON_HARD_BUDGET:-400}"
+  target_budget="${AICHESSATHON_TARGET_BUDGET:-500}"
+  hard_budget="${AICHESSATHON_HARD_BUDGET:-1000}"
   if awk -v target="$target_budget" -v hard="$hard_budget" 'BEGIN {exit !(hard <= target)}'; then
     echo "Hard budget must be greater than the operating target." >&2
     exit 2

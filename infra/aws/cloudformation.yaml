@@ -30,12 +30,12 @@ Parameters:
     Default: codex/environment-setup
   TargetBudgetLimit:
     Type: Number
-    Default: 200
+    Default: 500
     MinValue: 1
     MaxValue: 10000
   HardBudgetLimit:
     Type: Number
-    Default: 400
+    Default: 1000
     MinValue: 1
     MaxValue: 10000
   BaselineProjectSpend:
@@ -266,7 +266,7 @@ Resources:
             Ebs:
               DeleteOnTermination: true
               Encrypted: true
-              VolumeSize: 40
+              VolumeSize: 100
               VolumeType: gp3
         IamInstanceProfile:
           Arn: !GetAtt ComputeInstanceProfile.Arn

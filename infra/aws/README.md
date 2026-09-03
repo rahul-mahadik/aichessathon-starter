@@ -26,10 +26,10 @@ bash infra/aws/compute.sh outputs
 The CloudFormation stack creates a private versioned artifact bucket, a narrowly scoped EC2 role,
 an outbound-only security group, and CPU/GPU launch templates. It does not launch instances. Both
 templates use encrypted gp3 disks, require IMDSv2, have no inbound ports, and schedule a shutdown
-after six hours on every boot. It creates project-tagged budgets at a $200 operating target and a
-$400 emergency threshold. Because AWS billing data is delayed, the launch wrapper also atomically
+after six hours on every boot. It creates project-tagged budgets at a $500 operating target and a
+$1,000 emergency threshold. Because AWS billing data is delayed, the launch wrapper also atomically
 reserves every worker's worst-case six-hour cost in DynamoDB and refuses a launch that would take
-the month above $400. The emergency AWS Budget action stops the active project instances when its
+the month above $1,000. The emergency AWS Budget action stops the active project instances when its
 delayed threshold fires. For an intentionally longer job, run
 `sudo systemctl disable --now aichessathon-autostop.timer` on that worker and stop it manually.
 
@@ -247,6 +247,32 @@ gate; Phase C does not use wall-clock loss as a reason to stop a promising scali
 DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-evaluate.sh
 DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-benchmark.sh phase-c-d3m-c4p5
 ```
+
+## Phase D 100M data scale
+
+Phase D retains the complete 10M Phase C dataset and adds 90M feature-disjoint positions from
+fresh Gigafish source shards. The 22,500 new shards are resumable and intended for 30 CPU
+workers:
+
+```bash
+DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-d-corpus.sh
+DISTILL_RUN_ID=phase-d-20260903a TEACHER_WORKER_COUNT=30 \
+  bash infra/aws/phase-d-label.sh 0
+```
+
+Run worker indices 0 through 29. Workers wait for the corpus, label at 100k Stockfish nodes, and
+shut down after uploading their shards. Worker 0 assembles the new 90M component and retains the
+three existing Phase C components, producing an exact 100M training set. Train the small, 20MB,
+and 40MB cells with `D100`, `D100C20`, and `D100C40`, respectively. The default five epochs and
+4,096 batch size give slightly more optimizer steps than the 10M/20-epoch cells while exposing the
+student to ten times as many unique positions:
+
+```bash
+DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-d-train.sh D100C40
+```
+
+Use `phase-d-evaluate.sh` for the clock-free evaluator test and `phase-d-benchmark.sh MODEL` for
+the paired 1k/10k-node search tests.
 
 ## Cost and lifecycle guardrails
 

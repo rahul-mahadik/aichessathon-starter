@@ -2,6 +2,7 @@
 set -euo pipefail
 
 RUN_ID="${DISTILL_RUN_ID:-phase-c-20260902a}"
+STATUS_NAME="${DISTILL_CORPUS_STATUS_NAME:-phase-c-corpus.json}"
 MEDIUM_POSITIONS="${DISTILL_MEDIUM_POSITIONS:-9000000}"
 SHARDS="${DISTILL_SHARDS:-2250}"
 SEED="${DISTILL_SEED:-20260903}"
@@ -78,7 +79,7 @@ jq -n \
   --argjson seed "$SEED" \
   '{run_id:$run_id,status:"complete",git_revision:$git_revision,positions:$positions,shards:$shards,seed:$seed}' \
   >"$WORK_DIRECTORY/status.json"
-aws s3 cp "$WORK_DIRECTORY/status.json" "$RUN_PREFIX/status/phase-c-corpus.json" \
+aws s3 cp "$WORK_DIRECTORY/status.json" "$RUN_PREFIX/status/$STATUS_NAME" \
   --only-show-errors
 
 if [[ "${DISTILL_SHUTDOWN:-1}" == "1" ]]; then
