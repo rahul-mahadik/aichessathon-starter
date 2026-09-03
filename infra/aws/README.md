@@ -231,6 +231,14 @@ Train data-scale cells `D3` and `D10`, or capacity cells `C10`, `C20`, and `C40`
 DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-train.sh D3
 ```
 
+Once both extension components exist, run the two small-architecture data cells concurrently on
+one GPU worker. This restores the six-hour reboot safety timer, retains separate logs in S3, waits
+for both jobs, and shuts the worker down even if either cell fails:
+
+```bash
+DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-train-data.sh
+```
+
 Pure evaluator scoring remains unconstrained by time. Fixed-node games are the initial search
 gate; Phase C does not use wall-clock loss as a reason to stop a promising scaling curve:
 
