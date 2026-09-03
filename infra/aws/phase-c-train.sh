@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CELL="${1:?cell required: D3, D10, C10, C20, or C40}"
+CELL="${1:?cell required: D3, D10, C10, C20, C40, or D10C20}"
 RUN_ID="${DISTILL_RUN_ID:-phase-c-20260902a}"
 
 case "$CELL" in
@@ -35,8 +35,14 @@ case "$CELL" in
     EXPECTED_RECORDS=1000000
     ARCHITECTURE=(--accumulator 1024 --hidden 512 --bottleneck 256)
     ;;
+  D10C20)
+    MODEL_NAME=phase-c-d10m-c20
+    DATASETS="phase-c-base-1m phase-c-extra-2m phase-c-extra-7m"
+    EXPECTED_RECORDS=10000000
+    ARCHITECTURE=(--accumulator 512 --hidden 256 --bottleneck 128)
+    ;;
   *)
-    echo "cell must be D3, D10, C10, C20, or C40" >&2
+    echo "cell must be D3, D10, C10, C20, C40, or D10C20" >&2
     exit 2
     ;;
 esac
