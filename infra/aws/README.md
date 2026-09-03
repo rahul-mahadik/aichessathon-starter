@@ -38,6 +38,9 @@ worker finishes early. Override the target, ceiling, baseline estimate, or safet
 deployment time with `AICHESSATHON_TARGET_BUDGET`, `AICHESSATHON_HARD_BUDGET`,
 `AICHESSATHON_BASELINE_SPEND`, and `AICHESSATHON_SAFETY_HOURS`.
 
+Set `AICHESSATHON_SUBNET_ID` when launching either CPU or GPU workers to use another availability
+zone during a capacity shortage. The launch template security group remains attached.
+
 ## CPU benchmarking
 
 Use a fixed-performance x86 compute-optimized instance; avoid Flex and burstable families for

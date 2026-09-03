@@ -207,10 +207,6 @@ launch() {
   tag_workload="${tag_workload:-training}"
   template_id="$(stack_output "$output_key")"
   if [[ -n "$subnet_id" ]]; then
-    if [[ "$workload" != "gpu" ]]; then
-      echo "AICHESSATHON_SUBNET_ID is currently supported only by the GPU template." >&2
-      exit 2
-    fi
     if [[ ! "$subnet_id" =~ ^subnet-[0-9a-f]+$ ]]; then
       echo "AICHESSATHON_SUBNET_ID is not a valid subnet ID." >&2
       exit 2

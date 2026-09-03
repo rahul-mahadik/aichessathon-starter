@@ -280,13 +280,8 @@ Resources:
           InstanceMetadataTags: enabled
         Monitoring:
           Enabled: false
-        NetworkInterfaces:
-          - AssociatePublicIpAddress: true
-            DeleteOnTermination: true
-            DeviceIndex: 0
-            Groups:
-              - !Ref ComputeSecurityGroup
-            SubnetId: !Ref SubnetId
+        SecurityGroupIds:
+          - !Ref ComputeSecurityGroup
         TagSpecifications:
           - ResourceType: instance
             Tags:
