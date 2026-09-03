@@ -14,7 +14,6 @@ PARALLELISM="${TEACHER_PARALLELISM:-32}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 WAIT_SECONDS="${PHASE_D_WAIT_SECONDS:-30}"
-CORPUS_WAIT_LIMIT="${PHASE_D_CORPUS_WAIT_LIMIT:-480}"
 LABEL_WAIT_LIMIT="${PHASE_D_LABEL_WAIT_LIMIT:-480}"
 
 has_coordinator=0
@@ -28,19 +27,9 @@ for worker_index in "${WORKER_INDICES[@]}"; do
   fi
 done
 
-for ((attempt = 1; attempt <= CORPUS_WAIT_LIMIT; attempt++)); do
-  if aws s3 ls "$RUN_PREFIX/corpus/manifest.json" >/dev/null 2>&1; then
-    break
-  fi
-  if (( attempt == CORPUS_WAIT_LIMIT )); then
-    echo "timed out waiting for the Phase D corpus" >&2
-    sudo shutdown -h +1
-    exit 1
-  fi
-  sleep "$WAIT_SECONDS"
-done
-
 for worker_index in "${WORKER_INDICES[@]}"; do
+  DISTILL_RUN_ID="$RUN_ID" TEACHER_WORKER_COUNT="$WORKER_COUNT" \
+    bash infra/aws/phase-d-corpus-part.sh "$worker_index"
   worker_failed=0
   TEACHER_RUN_ID="$RUN_ID" \
   TEACHER_TIER=medium \

@@ -254,16 +254,17 @@ DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-benchmark.sh phase-c-d3m
 ## Phase D 100M data scale
 
 Phase D retains the complete 10M Phase C dataset and adds 90M feature-disjoint positions from
-fresh Gigafish source shards. The 22,500 new shards are resumable and intended for 30 CPU
-workers:
+fresh Gigafish source shards. Thirty independent workers each generate and label a 3M-position
+partition from four distinct source shards, avoiding a single-core 90M sampling bottleneck. The
+22,500 output shards are globally numbered and resumable:
 
 ```bash
-DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-d-corpus.sh
 DISTILL_RUN_ID=phase-d-20260903a TEACHER_WORKER_COUNT=30 \
   bash infra/aws/phase-d-label.sh 0
 ```
 
-Run worker indices 0 through 29. Multiple indices may be assigned sequentially to one machine,
+Run worker indices 0 through 29. Each retains a pinned source manifest and excludes all prior
+training and evaluator-visible positions. Multiple indices may be assigned sequentially to one machine,
 which permits a smaller fleet to cover all partitions while a quota increase is pending. Workers
 wait for the corpus, label at 100k Stockfish nodes, and shut down after uploading their shards.
 Worker 0 assembles the new 90M component and retains the
