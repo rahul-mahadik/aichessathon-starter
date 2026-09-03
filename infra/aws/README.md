@@ -226,7 +226,7 @@ DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-prepare.sh
 ```
 
 Train data-scale cells `D3` and `D10`, capacity cells `C10`, `C20`, and `C40`, or the joint
-10M-position/20-MB cell `D10C20`:
+10M-position capacity cells `D10C20` and `D10C40`:
 
 ```bash
 DISTILL_RUN_ID=phase-c-20260902a bash infra/aws/phase-c-train.sh D3
