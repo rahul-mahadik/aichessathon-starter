@@ -23,6 +23,8 @@ under [`distill/`](distill/README.md). Stockfish is never part of the submission
 
 The independent, non-distillation comparison engine and its experiment matrix are documented in
 [`docs/classical-control.md`](docs/classical-control.md).
+For offline research only, `controls/stockfish_local/` exposes an installed Stockfish 18 through
+the same agent contract; it is intentionally prohibited from submission packaging.
 
 ## Writing an agent
 
