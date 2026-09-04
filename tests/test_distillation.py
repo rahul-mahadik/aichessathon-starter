@@ -21,7 +21,7 @@ from distill.sample_gigafish import (
     sample_corpus,
 )
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
-from nnue_runtime import QuantizedEvaluator
+from nnue_runtime import IncrementalQuantizedEvaluator, QuantizedEvaluator
 from training.nnue import SparseValueNetwork, export_quantized
 from training.train_distilled import Batch, losses
 
@@ -371,6 +371,43 @@ class DistillationTests(unittest.TestCase):
             board.turn = not board.turn
             second = evaluator.raw_value(board)
         self.assertAlmostEqual(first, -second, places=6)
+
+    def test_incremental_runtime_matches_reference_through_move_stacks(self) -> None:
+        torch.manual_seed(6)
+        model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        cases = [
+            (
+                chess.Board(),
+                ["e2e4", "c7c5", "g1f3", "d7d6", "f1b5", "b8c6"],
+            ),
+            (chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"), ["e1g1"]),
+            (chess.Board("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1"), ["e5d6"]),
+            (chess.Board("4k3/P7/8/8/8/8/8/4K3 w - - 0 1"), ["a7a8q"]),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nnue.npz"
+            export_quantized(model, path)
+            reference = QuantizedEvaluator(path, antisymmetric=True)
+            incremental = IncrementalQuantizedEvaluator(path, antisymmetric=True)
+            for board, moves in cases:
+                incremental.begin(board)
+                self.assertAlmostEqual(
+                    incremental.raw_value(board), reference.raw_value(board), places=6
+                )
+                for move_text in moves:
+                    move = chess.Move.from_uci(move_text)
+                    self.assertIn(move, board.legal_moves)
+                    incremental.push(board, move)
+                    board.push(move)
+                    self.assertAlmostEqual(
+                        incremental.raw_value(board), reference.raw_value(board), places=6
+                    )
+                for _ in moves:
+                    incremental.pop()
+                    board.pop()
+                    self.assertAlmostEqual(
+                        incremental.raw_value(board), reference.raw_value(board), places=6
+                    )
 
     def test_training_antisymmetry_loss_uses_turn_flipped_predictions(self) -> None:
         predictions = torch.tensor([[0.2, -0.8, -0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])

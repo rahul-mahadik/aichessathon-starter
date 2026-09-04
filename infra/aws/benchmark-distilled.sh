@@ -7,6 +7,10 @@ VARIANT_NAME="${DISTILL_VARIANT_NAME:-$MODEL_NAME}"
 OPPONENT_MODEL_NAME="${DISTILL_OPPONENT_MODEL_NAME:-fallback}"
 CANDIDATE_ANTISYMMETRIC="${DISTILL_CANDIDATE_ANTISYMMETRIC:-0}"
 OPPONENT_ANTISYMMETRIC="${DISTILL_OPPONENT_ANTISYMMETRIC:-0}"
+CANDIDATE_SEARCH="${DISTILL_CANDIDATE_SEARCH:-baseline}"
+CANDIDATE_RUNTIME="${DISTILL_CANDIDATE_RUNTIME:-reference}"
+OPPONENT_SEARCH="${DISTILL_OPPONENT_SEARCH:-baseline}"
+OPPONENT_RUNTIME="${DISTILL_OPPONENT_RUNTIME:-reference}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 WORKERS="${BENCH_WORKERS:-3}"
@@ -22,28 +26,58 @@ else
 fi
 RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 
-mkdir -p "$CANDIDATE/weights" "$OPPONENT"
-cp agent.py nnue_runtime.py search_engine.py "$CANDIDATE/"
-cp agent.py nnue_runtime.py search_engine.py "$OPPONENT/"
+for mode in "$CANDIDATE_SEARCH" "$OPPONENT_SEARCH"; do
+  if [[ "$mode" != "baseline" && "$mode" != "strong" ]]; then
+    echo "search mode must be baseline or strong: $mode" >&2
+    exit 2
+  fi
+done
+for mode in "$CANDIDATE_RUNTIME" "$OPPONENT_RUNTIME"; do
+  if [[ "$mode" != "reference" && "$mode" != "incremental" ]]; then
+    echo "runtime mode must be reference or incremental: $mode" >&2
+    exit 2
+  fi
+done
+
+mkdir -p "$CANDIDATE/weights" "$OPPONENT/weights"
+cp agent.py nnue_runtime.py search_engine.py strong_search_engine.py "$CANDIDATE/"
+cp agent.py nnue_runtime.py search_engine.py strong_search_engine.py "$OPPONENT/"
 aws s3 cp "$RUN_PREFIX/models/$MODEL_NAME/${MODEL_NAME}.npz" \
   "$CANDIDATE/weights/nnue.npz"
+candidate_antisymmetric=false
 if [[ "$CANDIDATE_ANTISYMMETRIC" == "1" ]]; then
-  printf '{"antisymmetric":true}\n' >"$CANDIDATE/weights/evaluator.json"
+  candidate_antisymmetric=true
 fi
+jq -n \
+  --argjson antisymmetric "$candidate_antisymmetric" \
+  --arg search "$CANDIDATE_SEARCH" \
+  --arg runtime "$CANDIDATE_RUNTIME" \
+  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime}' \
+  >"$CANDIDATE/weights/evaluator.json"
 export BENCH_CANDIDATE_MODEL="$VARIANT_NAME"
+export BENCH_CANDIDATE_SEARCH="$CANDIDATE_SEARCH"
+export BENCH_CANDIDATE_RUNTIME="$CANDIDATE_RUNTIME"
 export BENCH_CANDIDATE_SHA256
 BENCH_CANDIDATE_SHA256="$(sha256sum "$CANDIDATE/weights/nnue.npz" | cut -d ' ' -f 1)"
+opponent_antisymmetric=false
+if [[ "$OPPONENT_ANTISYMMETRIC" == "1" ]]; then
+  opponent_antisymmetric=true
+fi
+jq -n \
+  --argjson antisymmetric "$opponent_antisymmetric" \
+  --arg search "$OPPONENT_SEARCH" \
+  --arg runtime "$OPPONENT_RUNTIME" \
+  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime}' \
+  >"$OPPONENT/weights/evaluator.json"
 if [[ "$OPPONENT_MODEL_NAME" != "fallback" ]]; then
-  mkdir -p "$OPPONENT/weights"
   aws s3 cp "$RUN_PREFIX/models/$OPPONENT_MODEL_NAME/${OPPONENT_MODEL_NAME}.npz" \
     "$OPPONENT/weights/nnue.npz"
-  if [[ "$OPPONENT_ANTISYMMETRIC" == "1" ]]; then
-    printf '{"antisymmetric":true}\n' >"$OPPONENT/weights/evaluator.json"
-  fi
   export BENCH_OPPONENT_SHA256
   BENCH_OPPONENT_SHA256="$(sha256sum "$OPPONENT/weights/nnue.npz" | cut -d ' ' -f 1)"
 fi
 export BENCH_OPPONENT_MODEL="$OPPONENT_MODEL_NAME"
+export BENCH_OPPONENT_SEARCH="$OPPONENT_SEARCH"
+export BENCH_OPPONENT_RUNTIME="$OPPONENT_RUNTIME"
 
 BENCH_AGENT="$CANDIDATE" \
 BENCH_OPPONENT="$OPPONENT" \

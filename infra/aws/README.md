@@ -280,6 +280,19 @@ DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-d-train.sh D100C40
 Use `phase-d-evaluate.sh` for the clock-free evaluator test and `phase-d-benchmark.sh MODEL` for
 the paired 1k/10k-node search tests.
 
+The post-distillation queue can wait on the 90M dataset marker before starting one or more training
+cells, and it shuts the worker down on success or failure. After training, the architecture matrix
+adds 100k-node, stronger-search, incremental-runtime, and wall-clock cells:
+
+```bash
+DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-d-train-queue.sh D100C40
+DISTILL_RUN_ID=phase-d-20260903a \
+  bash infra/aws/phase-d-search-matrix.sh phase-d-d100m-c40
+```
+
+See [`docs/post-distillation.md`](../../docs/post-distillation.md) for the complete two-GPU queue
+and experimental decision order.
+
 ## Cost and lifecycle guardrails
 
 1. Set an AWS Budget before launching GPU instances.

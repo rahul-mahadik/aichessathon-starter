@@ -10,6 +10,7 @@ import os
 import platform
 import subprocess
 import time
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         for position in positions
         for candidate_is_white in (True, False)
     ]
+    records: Iterator[GameRecord]
     if arguments.workers == 1:
         records = map(play_game, specs)
     else:
@@ -204,8 +206,12 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             "opponent": str(opponent),
             "candidate_model": os.environ.get("BENCH_CANDIDATE_MODEL"),
             "candidate_model_sha256": os.environ.get("BENCH_CANDIDATE_SHA256"),
+            "candidate_search": os.environ.get("BENCH_CANDIDATE_SEARCH"),
+            "candidate_runtime": os.environ.get("BENCH_CANDIDATE_RUNTIME"),
             "opponent_model": os.environ.get("BENCH_OPPONENT_MODEL"),
             "opponent_model_sha256": os.environ.get("BENCH_OPPONENT_SHA256"),
+            "opponent_search": os.environ.get("BENCH_OPPONENT_SEARCH"),
+            "opponent_runtime": os.environ.get("BENCH_OPPONENT_RUNTIME"),
             "positions": str(arguments.positions),
             "rounds": arguments.rounds,
             "base_ms": arguments.base_ms,

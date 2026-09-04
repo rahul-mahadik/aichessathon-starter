@@ -20,6 +20,8 @@ see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 The search-distillation design and reproducible ablations are documented in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); offline Stockfish labeling and sparse training live
 under [`distill/`](distill/README.md). Stockfish is never part of the submission.
+The independent post-distillation search/runtime track and its ready-to-run AWS matrix are in
+[`docs/post-distillation.md`](docs/post-distillation.md).
 
 The independent, non-distillation comparison engine and its experiment matrix are documented in
 [`docs/classical-control.md`](docs/classical-control.md).
