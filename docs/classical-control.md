@@ -54,6 +54,8 @@ rounds, and exactly 1,000 nodes per move:
 |---|---|---:|---:|---:|---:|---:|
 | Classical control | Existing handcrafted search | 32 | 16-12-4 | 68.8% | +136 | 0 |
 | Classical control, 10k nodes | Existing handcrafted search | 48 | 39-3-6 | 84.4% | +293 | 0 |
+| Classical control, 100k nodes | Existing handcrafted search | 16 | 14-2-0 | 93.8% | +470 | 0 |
+| Classical control, 120 s + 0.5 s | Existing handcrafted search | 32 | 27-5-0 | 92.2% | +429 | 0 |
 
 This establishes a strong equal-search-quantity signal. The first 2 s + 0.05 s clock smoke test
 exposed a hot-path problem: the richer initial evaluator was about four times slower than the
@@ -63,9 +65,10 @@ Repeating the clock test then produced 10-3-3, a 71.9% score, with no failures. 
 0.5 s tournament is still required; a short-clock smoke result is directional, not an Elo claim.
 
 The 10,000-node local sweep was stopped after one long game because it was an inefficient use of
-the workstation. A dedicated AWS CPU worker subsequently completed the 48-game result above. Its
-95% score interval was 74.6% to 94.1% (approximately +187 to +482 Elo). The 100k-node and full
-competition-clock blocks were dispatched after it on the same worker.
+the workstation. A dedicated AWS CPU worker subsequently completed the three larger results above.
+The 10k score's 95% interval was 74.6% to 94.1% (approximately +187 to +482 Elo). The competition-
+clock score's interval was 85.8% to 98.6% (approximately +312 to +736 Elo). These intervals remain
+wide and repeated rounds over a larger opening suite are required before fine-grained tuning.
 
 The packaged control contains three Python files, measures 28,461 bytes unzipped, and contains no
 native binaries or external weights.
