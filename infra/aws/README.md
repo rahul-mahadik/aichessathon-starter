@@ -290,6 +290,9 @@ DISTILL_RUN_ID=phase-d-20260903a \
   bash infra/aws/phase-d-search-matrix.sh phase-d-d100m-c40
 ```
 
+AWS GPU images may mount `/tmp` as a small RAM filesystem. Set `DISTILL_WORK_ROOT` to a path on the
+encrypted root volume and use `DISTILL_DATASET_CACHE_ROOT` so sequential cells share one download.
+
 See [`docs/post-distillation.md`](../../docs/post-distillation.md) for the complete two-GPU queue
 and experimental decision order.
 

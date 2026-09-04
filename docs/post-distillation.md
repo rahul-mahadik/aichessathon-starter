@@ -58,6 +58,14 @@ DISTILL_RUN_ID=phase-d-20260903a \
 Each queue waits for `dataset/phase-d-extra-90m/dataset.json`. It stops the GPU after its assigned
 cells upload models and completion status.
 
+On AWS DLAMIs, keep the dataset off the small RAM-backed `/tmp` filesystem and cache it across
+sequential cells:
+
+```bash
+export DISTILL_WORK_ROOT=/home/ec2-user/aichessathon-work
+export DISTILL_DATASET_CACHE_ROOT="$DISTILL_WORK_ROOT/dataset-cache/phase-d-20260903a"
+```
+
 After all three models exist, run the unconstrained evaluator test unchanged:
 
 ```bash

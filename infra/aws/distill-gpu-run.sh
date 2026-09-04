@@ -10,7 +10,9 @@ EXPECTED_RECORDS="${DISTILL_EXPECTED_RECORDS:?DISTILL_EXPECTED_RECORDS is requir
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 PYTORCH_PYTHON="${PYTORCH_PYTHON:-/opt/pytorch/bin/python}"
 TRAINING_DEPS="${TRAINING_DEPS:-.deps-aws-distilled}"
-WORK_DIRECTORY="/tmp/aichessathon-distill-${RUN_ID}-${MODEL_NAME}"
+WORK_ROOT="${DISTILL_WORK_ROOT:-/tmp}"
+DATASET_CACHE_ROOT="${DISTILL_DATASET_CACHE_ROOT:-}"
+WORK_DIRECTORY="${WORK_ROOT%/}/aichessathon-distill-${RUN_ID}-${MODEL_NAME}"
 RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 RAW_DIRECTORY="$WORK_DIRECTORY/raw"
 DATASET_DIRECTORY="$WORK_DIRECTORY/dataset"
@@ -21,7 +23,7 @@ if [[ ! -x "$PYTORCH_PYTHON" ]]; then
   exit 1
 fi
 
-mkdir -p "$RAW_DIRECTORY" "$DATASET_DIRECTORY"
+mkdir -p "$WORK_ROOT" "$RAW_DIRECTORY" "$DATASET_DIRECTORY"
 if [[ ! -d "$TRAINING_DEPS/chess" ]]; then
   "$PYTORCH_PYTHON" -m pip install \
     --target "$TRAINING_DEPS" \
@@ -38,7 +40,12 @@ if [[ -n "$REUSE_DATASET_MODELS" ]]; then
       echo "DISTILL_REUSE_DATASET_MODELS contains an unsafe name: $dataset_model" >&2
       exit 2
     fi
-    component_directory="$DATASET_DIRECTORY/$dataset_model"
+    if [[ -n "$DATASET_CACHE_ROOT" ]]; then
+      component_directory="${DATASET_CACHE_ROOT%/}/$dataset_model"
+    else
+      component_directory="$DATASET_DIRECTORY/$dataset_model"
+    fi
+    mkdir -p "$component_directory"
     aws s3 sync "$RUN_PREFIX/dataset/$dataset_model/" "$component_directory/"
     if [[ ! -f "$component_directory/dataset.json" ]]; then
       echo "Reusable dataset $dataset_model has no dataset.json" >&2
