@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -23,7 +24,7 @@ from distill.features import (
     PADDING_INDEX,
     encode_board,
 )
-from training.nnue import SparseValueNetwork, export_quantized
+from training.nnue import SparseValueNetwork, export_quantized, initialize_from_quantized
 
 
 class Batch(TypedDict):
@@ -261,6 +262,16 @@ def main() -> None:
     parser.add_argument("--accumulator", type=int, default=128)
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--bottleneck", type=int, default=32)
+    parser.add_argument(
+        "--initialize-from",
+        type=Path,
+        help="reuse compatible layers from an exported quantized evaluator",
+    )
+    parser.add_argument(
+        "--freeze-feature",
+        action="store_true",
+        help="train only the dense head after loading a sparse representation",
+    )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--smoke", action="store_true")
     arguments = parser.parse_args()
@@ -280,6 +291,8 @@ def main() -> None:
         parser.error(f"--top-k must be between 1 and {MAX_CANDIDATES}")
     if arguments.top_k_ranking_boost < 1:
         parser.error("--top-k-ranking-boost must be at least 1")
+    if arguments.freeze_feature and arguments.initialize_from is None:
+        parser.error("--freeze-feature requires --initialize-from")
 
     random.seed(arguments.seed)
     np.random.seed(arguments.seed)
@@ -308,7 +321,21 @@ def main() -> None:
         hidden=arguments.hidden,
         bottleneck=arguments.bottleneck,
     ).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=arguments.learning_rate)
+    initialized_layers: list[str] = []
+    initialization_sha256: str | None = None
+    if arguments.initialize_from is not None:
+        initialized_layers = initialize_from_quantized(
+            model,
+            arguments.initialize_from,
+            freeze_feature=arguments.freeze_feature,
+        )
+        initialization_sha256 = hashlib.sha256(
+            arguments.initialize_from.read_bytes()
+        ).hexdigest()
+    optimizer = torch.optim.AdamW(
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
+        lr=arguments.learning_rate,
+    )
     last_validation: dict[str, float] = {}
     best_validation_loss = math.inf
     best_epoch = 0
@@ -400,6 +427,12 @@ def main() -> None:
             "antisymmetry_weight": arguments.antisymmetry_weight,
             "top_k": arguments.top_k,
             "top_k_ranking_boost": arguments.top_k_ranking_boost,
+            "initialized_from": (
+                str(arguments.initialize_from) if arguments.initialize_from else None
+            ),
+            "initialization_sha256": initialization_sha256,
+            "initialized_layers": initialized_layers,
+            "feature_frozen": arguments.freeze_feature,
             "seed": arguments.seed,
             "best_epoch": best_epoch,
             "best_validation_loss": best_validation_loss,

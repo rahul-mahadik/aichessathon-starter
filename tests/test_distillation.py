@@ -22,7 +22,7 @@ from distill.sample_gigafish import (
 )
 from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records, write_records
 from nnue_runtime import IncrementalQuantizedEvaluator, QuantizedEvaluator
-from training.nnue import SparseValueNetwork, export_quantized
+from training.nnue import SparseValueNetwork, export_quantized, initialize_from_quantized
 from training.train_distilled import Batch, losses
 
 
@@ -358,6 +358,30 @@ class DistillationTests(unittest.TestCase):
         direct, flipped = model.forward_with_flipped_turns(features, turns)
         self.assertTrue(torch.equal(direct, model(features, turns)))
         self.assertTrue(torch.equal(flipped, model(features, ~turns)))
+
+    def test_narrow_student_can_reuse_and_freeze_sparse_teacher(self) -> None:
+        torch.manual_seed(11)
+        teacher = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        student = SparseValueNetwork(accumulator=16, hidden=6, bottleneck=4)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "teacher.npz"
+            export_quantized(teacher, path)
+            copied = initialize_from_quantized(student, path, freeze_feature=True)
+            with np.load(path, allow_pickle=False) as archive:
+                expected = archive["feature_q"].astype(np.float32) * np.float32(
+                    archive["feature_scale"]
+                )
+
+        self.assertEqual(copied, ["feature", "feature_bias"])
+        np.testing.assert_allclose(
+            student.feature.weight[:FEATURE_DIM].detach().numpy(), expected
+        )
+        np.testing.assert_allclose(
+            student.feature_bias.detach().numpy(), teacher.feature_bias.detach().numpy()
+        )
+        self.assertFalse(student.feature.weight.requires_grad)
+        self.assertFalse(student.feature_bias.requires_grad)
+        self.assertTrue(student.hidden_one.weight.requires_grad)
 
     def test_antisymmetric_runtime_flips_with_turn(self) -> None:
         torch.manual_seed(5)

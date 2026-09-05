@@ -65,6 +65,61 @@ def _quantize_int8(weights: np.ndarray) -> tuple[np.ndarray, np.float32]:
     return quantized, scale
 
 
+def initialize_from_quantized(
+    model: SparseValueNetwork,
+    source: Path,
+    *,
+    freeze_feature: bool = False,
+) -> list[str]:
+    """Initialize compatible layers from an exported quantized evaluator.
+
+    A narrower student can reuse a teacher's sparse representation even when its
+    dense head has different shapes. Dense layers are copied only when their
+    shapes match exactly.
+    """
+    copied = ["feature", "feature_bias"]
+    with np.load(source, allow_pickle=False) as archive:
+        feature_dim = int(archive["feature_dim"])
+        accumulator = int(archive["accumulator"])
+        if feature_dim != FEATURE_DIM:
+            raise ValueError(
+                f"feature dimension mismatch: checkpoint={feature_dim}, model={FEATURE_DIM}"
+            )
+        if accumulator != model.accumulator:
+            raise ValueError(
+                f"accumulator mismatch: checkpoint={accumulator}, model={model.accumulator}"
+            )
+
+        feature = archive["feature_q"].astype(np.float32) * np.float32(
+            archive["feature_scale"]
+        )
+        with torch.no_grad():
+            model.feature.weight[:FEATURE_DIM].copy_(torch.from_numpy(feature))
+            model.feature.weight[PADDING_INDEX].zero_()
+            model.feature_bias.copy_(torch.from_numpy(archive["feature_bias"]))
+
+            dense_layers = (
+                ("hidden_one", model.hidden_one),
+                ("hidden_two", model.hidden_two),
+                ("output", model.output),
+            )
+            for name, layer in dense_layers:
+                weight = archive[f"{name}_weight"]
+                bias = archive[f"{name}_bias"]
+                if tuple(weight.shape) != tuple(layer.weight.shape) or tuple(
+                    bias.shape
+                ) != tuple(layer.bias.shape):
+                    continue
+                layer.weight.copy_(torch.from_numpy(weight))
+                layer.bias.copy_(torch.from_numpy(bias))
+                copied.append(name)
+
+    if freeze_feature:
+        model.feature.weight.requires_grad_(False)
+        model.feature_bias.requires_grad_(False)
+    return copied
+
+
 def export_quantized(
     model: SparseValueNetwork,
     destination: Path,

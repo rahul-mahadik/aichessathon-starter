@@ -96,5 +96,20 @@ Reports record model hashes, search mode, runtime mode, hardware, and Git revisi
 5. Only then test a root/shallow policy head. MultiPV 8 is partial ranking supervision, so policy
    needs explicit legal-move negatives and its extra inference must beat ordinary move ordering.
 
+## C40-derived CPU-head ablation
+
+Phase E reuses C40's learned 1024-wide sparse feature table and freezes it while fitting much
+cheaper dense heads on the same 100M labels. This isolates deployment-head capacity from learned
+representation quality and avoids paying to relearn the 50-million-parameter sparse table.
+
+```bash
+DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-e-train.sh H64FROZEN
+DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/phase-e-train.sh H32FROZEN
+```
+
+The two heads reduce antisymmetric dense work from roughly 2.36 million multiply-adds per leaf to
+about 266 thousand and 133 thousand respectively. Both remain evaluator experiments until they
+pass the clock-free holdout and fixed-node gates.
+
 Raw nodes, evaluator calls, and elapsed time should all be retained. Once pruning changes, equal
 node counts no longer imply equal leaf-evaluation work.
