@@ -8,6 +8,7 @@ import chess
 
 from frontier_search_engine import FrontierSearchEngine
 from ordered_search_engine import OrderedSearchEngine
+from policy_search_engine import PolicySearchEngine
 from search_engine import handcrafted_evaluation
 from see_search_engine import SeeSearchEngine
 from strong_search_engine import StrongSearchEngine
@@ -58,6 +59,23 @@ class StrongSearchEngineTests(unittest.TestCase):
         result = OrderedSearchEngine(handcrafted_evaluation).choose(board, 1_000)
         board.push(result.move)
         self.assertTrue(board.is_checkmate(), result.move.uci())
+
+    def test_policy_search_uses_legal_move_priors(self) -> None:
+        class PolicyEvaluator:
+            def __call__(self, board: chess.Board) -> float:
+                return handcrafted_evaluation(board)
+
+            def policy_scores(
+                self, board: chess.Board, moves: list[chess.Move]
+            ) -> dict[chess.Move, float]:
+                return {move: float(move == chess.Move.from_uci("e2e4")) for move in moves}
+
+        board = chess.Board()
+        original = board.fen()
+        result = PolicySearchEngine(PolicyEvaluator()).choose_fixed_nodes(board, 1_000)
+        self.assertIn(result.move, board.legal_moves)
+        self.assertEqual(result.nodes, 1_000)
+        self.assertEqual(board.fen(), original)
 
     def test_static_exchange_distinguishes_winning_and_losing_captures(self) -> None:
         winning = chess.Board("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1")

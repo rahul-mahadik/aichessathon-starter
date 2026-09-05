@@ -21,6 +21,9 @@ class OrderedSearchEngine(StrongSearchEngine):
         self._root_position_key: int | None = None
         self._root_scores: dict[chess.Move, int] = {}
 
+    def _root_prior(self, board: chess.Board, moves: list[chess.Move]) -> dict[chess.Move, float]:
+        return {}
+
     def _root(
         self,
         board: chess.Board,
@@ -37,12 +40,14 @@ class OrderedSearchEngine(StrongSearchEngine):
         entry = self.table.get(root_key)
         tt_move = entry.move if entry is not None else previous
         moves = self._ordered_moves(board, list(board.legal_moves), tt_move, 0)
+        priors = self._root_prior(board, moves)
         # Python's sort is stable, retaining the strong engine's tactical,
         # history, and TT ordering for moves without a prior root score.
         moves.sort(
             key=lambda move: (
                 move == tt_move,
                 self._root_scores.get(move, -INFINITY),
+                priors.get(move, -float("inf")),
             ),
             reverse=True,
         )

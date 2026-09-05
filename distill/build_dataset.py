@@ -24,6 +24,12 @@ def write_shard(path: Path, groups: list[TrainingGroup]) -> None:
         value_mask=np.stack([group.value_mask for group in groups]),
         candidate_scores=np.stack([group.candidate_scores for group in groups]),
         candidate_mask=np.stack([group.candidate_mask for group in groups]),
+        metadata=np.stack([group.metadata for group in groups]),
+        policy_from=np.stack([group.policy_from for group in groups]),
+        policy_to=np.stack([group.policy_to for group in groups]),
+        policy_promotion=np.stack([group.policy_promotion for group in groups]),
+        policy_scores=np.stack([group.policy_scores for group in groups]),
+        policy_mask=np.stack([group.policy_mask for group in groups]),
     )
 
 

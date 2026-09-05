@@ -11,7 +11,15 @@ import numpy as np
 import torch
 
 from distill.build_dataset import build_parallel
-from distill.features import FEATURE_DIM, PADDING_INDEX, encode_board, record_to_group
+from distill.features import (
+    FEATURE_DIM,
+    MAX_CANDIDATES,
+    METADATA_DIM,
+    PADDING_INDEX,
+    encode_board,
+    encode_metadata,
+    record_to_group,
+)
 from distill.inspect_teacher import inspect
 from distill.mine_depth_disagreements import depth_distance, mine
 from distill.sample_gigafish import (
@@ -25,9 +33,11 @@ from nnue_runtime import (
     BufferedIncrementalQuantizedEvaluator,
     IncrementalQuantizedEvaluator,
     IntegerQuantizedEvaluator,
+    PolicyQuantizedEvaluator,
     QuantizedEvaluator,
 )
 from training.nnue import SparseValueNetwork, export_quantized, initialize_from_quantized
+from training.policy import SparsePolicyNetwork, export_policy, initialize_sparse_policy
 from training.train_distilled import Batch, losses
 
 
@@ -159,6 +169,19 @@ class DistillationTests(unittest.TestCase):
         self.assertAlmostEqual(float(group.targets[0]), 0.14, places=5)
         self.assertAlmostEqual(float(group.targets[1]), -0.14, places=5)
         self.assertTrue(np.all(group.features[2:] == PADDING_INDEX))
+        self.assertTrue(group.policy_mask[0])
+        self.assertEqual(group.policy_from[0], chess.E2)
+        self.assertEqual(group.policy_to[0], chess.E4)
+        self.assertTrue(np.any(group.policy_mask[MAX_CANDIDATES:]))
+
+    def test_metadata_encodes_castling_ep_and_rule50(self) -> None:
+        board = chess.Board("r3k2r/8/8/3pP3/8/8/8/R3K2R w Kq d6 47 1")
+        encoded = encode_metadata(board)
+        self.assertEqual(encoded.shape, (METADATA_DIM,))
+        self.assertEqual(encoded[0], 1.0)
+        self.assertEqual(encoded[3], 1.0)
+        self.assertEqual(encoded[4 + chess.FILE_NAMES.index("d")], 1.0)
+        self.assertEqual(encoded[13 + 2], 1.0)
 
     def test_depth_distance_detects_best_move_and_ranking_change(self) -> None:
         shallow = TeacherRecord(
@@ -385,6 +408,41 @@ class DistillationTests(unittest.TestCase):
                 abs(reference.raw_value(board) - integer.raw_value(board)) for board in boards
             ]
         self.assertLess(max(differences), 0.03)
+
+    def test_policy_runtime_tracks_pytorch(self) -> None:
+        torch.manual_seed(19)
+        value = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        policy = SparsePolicyNetwork(accumulator=16, policy_width=8).eval()
+        board = chess.Board()
+        moves = list(board.legal_moves)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "base.npz"
+            combined = root / "combined.npz"
+            export_quantized(value, base)
+            initialize_sparse_policy(policy, base)
+            export_policy(policy, base, combined, {})
+            evaluator = PolicyQuantizedEvaluator(combined)
+            actual = evaluator.policy_scores(board, moves)
+
+        features = torch.as_tensor(encode_board(board)).long().unsqueeze(0)
+        turns = torch.tensor([board.turn])
+        metadata = torch.as_tensor(encode_metadata(board)).unsqueeze(0)
+        move_from = torch.tensor([[move.from_square for move in moves]])
+        move_to = torch.tensor([[move.to_square for move in moves]])
+        promotion = torch.tensor([[move.promotion or 0 for move in moves]])
+        with torch.inference_mode():
+            expected = policy(
+                features,
+                turns,
+                metadata,
+                move_from,
+                move_to,
+                promotion,
+            )[0].numpy()
+        np.testing.assert_allclose(
+            np.array([actual[move] for move in moves]), expected, rtol=1e-5, atol=1e-5
+        )
 
     def test_training_reuses_accumulator_for_turn_flip(self) -> None:
         torch.manual_seed(4)

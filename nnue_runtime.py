@@ -14,6 +14,7 @@ MAX_PIECES = 32
 PADDING_INDEX = FEATURE_DIM
 FORMAT_VERSION = 1
 VALUE_SCALE_CP = 1_000.0
+METADATA_DIM = 21
 
 
 def _orient(square: chess.Square, perspective: chess.Color) -> int:
@@ -35,6 +36,19 @@ def encode_board(board: chess.Board) -> np.ndarray:
             encoded[perspective_index, offset] = (
                 oriented_king * PIECE_CATEGORIES + category
             ) * 64 + _orient(piece_square, perspective)
+    return encoded
+
+
+def encode_metadata(board: chess.Board) -> np.ndarray:
+    """Encode the non-piece state consumed by the optional policy head."""
+    encoded = np.zeros(METADATA_DIM, dtype=np.float32)
+    encoded[0] = board.has_kingside_castling_rights(chess.WHITE)
+    encoded[1] = board.has_queenside_castling_rights(chess.WHITE)
+    encoded[2] = board.has_kingside_castling_rights(chess.BLACK)
+    encoded[3] = board.has_queenside_castling_rights(chess.BLACK)
+    ep_index = 8 if board.ep_square is None else chess.square_file(board.ep_square)
+    encoded[4 + ep_index] = 1.0
+    encoded[13 + min(board.halfmove_clock // 16, 7)] = 1.0
     return encoded
 
 
@@ -389,6 +403,69 @@ class QuantizedEvaluator:
 
     def warmup(self) -> None:
         self.raw_value(chess.Board())
+
+
+class PolicyQuantizedEvaluator(QuantizedEvaluator):
+    """Value evaluator plus a compact factorized legal-move policy head."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
+        super().__init__(
+            path,
+            antisymmetric=antisymmetric,
+            value_scale_cp=value_scale_cp,
+        )
+        with np.load(path, allow_pickle=False) as archive:
+            if "policy_format_version" not in archive.files:
+                raise ValueError("NNUE artifact has no policy head")
+            if int(archive["policy_format_version"]) != 1:
+                raise ValueError("unsupported policy artifact format")
+            self.policy_width = int(archive["policy_width"])
+            self.policy_context_weight = archive["policy_context_weight"].copy()
+            self.policy_context_bias = archive["policy_context_bias"].copy()
+            self.policy_from_embedding = archive["policy_from_embedding"].copy()
+            self.policy_to_embedding = archive["policy_to_embedding"].copy()
+            self.policy_promotion_embedding = archive["policy_promotion_embedding"].copy()
+            self.policy_move_bias_weight = archive["policy_move_bias_weight"].copy()
+            self.policy_move_bias_bias = archive["policy_move_bias_bias"].copy()
+
+    def policy_scores(self, board: chess.Board, moves: list[chess.Move]) -> dict[chess.Move, float]:
+        """Score legal moves without searching their child positions."""
+        if not moves:
+            return {}
+        indices = encode_board(board)
+        accumulators = np.empty((2, self.feature_q.shape[1]), dtype=np.float32)
+        for perspective in range(2):
+            active = indices[perspective]
+            active = active[active < FEATURE_DIM]
+            accumulators[perspective] = (
+                self.feature_q[active].sum(axis=0) * self.feature_scale + self.feature_bias
+            )
+        mover = 0 if board.turn == chess.WHITE else 1
+        context_input = np.concatenate(
+            (accumulators[mover], accumulators[1 - mover], encode_metadata(board))
+        )
+        context = np.maximum(
+            self.policy_context_weight @ context_input + self.policy_context_bias,
+            0.0,
+        )
+        origins = np.fromiter((move.from_square for move in moves), dtype=np.intp)
+        destinations = np.fromiter((move.to_square for move in moves), dtype=np.intp)
+        promotions = np.fromiter((move.promotion or 0 for move in moves), dtype=np.intp)
+        move_vectors = (
+            self.policy_from_embedding[origins]
+            + self.policy_to_embedding[destinations]
+            + self.policy_promotion_embedding[promotions]
+        )
+        scores = move_vectors @ context / np.sqrt(self.policy_width)
+        scores += (move_vectors @ self.policy_move_bias_weight.T).reshape(-1)
+        scores += float(self.policy_move_bias_bias[0])
+        return dict(zip(moves, scores.tolist(), strict=True))
 
 
 class IntegerQuantizedEvaluator(QuantizedEvaluator):
