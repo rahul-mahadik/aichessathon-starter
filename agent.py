@@ -14,6 +14,7 @@ from nnue_runtime import (
     IncrementalQuantizedEvaluator,
     QuantizedEvaluator,
 )
+from ordered_search_engine import OrderedSearchEngine
 from search_engine import SearchEngine, handcrafted_evaluation
 from strong_search_engine import StrongSearchEngine
 
@@ -31,10 +32,11 @@ _ponder_enabled = bool(_config.get("ponder", False))
 _ponder_max_ms = int(str(_config.get("ponder_max_ms", 60_000)))
 if not 1 <= _ponder_max_ms <= 120_000:
     raise ValueError("ponder_max_ms must be between 1 and 120000")
-if _search_mode not in {"baseline", "strong", "frontier"}:
+if _search_mode not in {"baseline", "strong", "ordered", "frontier"}:
     raise ValueError(f"unsupported search mode: {_search_mode}")
 if _runtime_mode not in {"reference", "incremental", "buffered"}:
     raise ValueError(f"unsupported NNUE runtime mode: {_runtime_mode}")
+
 
 def _load_evaluator() -> Callable[[chess.Board], float]:
     if not _WEIGHTS.exists():
@@ -51,6 +53,8 @@ def _load_evaluator() -> Callable[[chess.Board], float]:
 
 
 def _make_search(evaluator: Callable[[chess.Board], float]) -> SearchEngine | StrongSearchEngine:
+    if _search_mode == "ordered":
+        return OrderedSearchEngine(evaluator)
     if _search_mode == "frontier":
         return FrontierSearchEngine(evaluator)
     if _search_mode == "strong":
