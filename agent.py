@@ -12,6 +12,7 @@ from frontier_search_engine import FrontierSearchEngine
 from nnue_runtime import (
     BufferedIncrementalQuantizedEvaluator,
     IncrementalQuantizedEvaluator,
+    IntegerQuantizedEvaluator,
     QuantizedEvaluator,
 )
 from ordered_search_engine import OrderedSearchEngine
@@ -37,7 +38,7 @@ if _value_scale_cp <= 0:
     raise ValueError("value_scale_cp must be positive")
 if _search_mode not in {"baseline", "strong", "ordered", "frontier"}:
     raise ValueError(f"unsupported search mode: {_search_mode}")
-if _runtime_mode not in {"reference", "incremental", "buffered"}:
+if _runtime_mode not in {"reference", "integer", "incremental", "buffered"}:
     raise ValueError(f"unsupported NNUE runtime mode: {_runtime_mode}")
 
 
@@ -47,6 +48,7 @@ def _load_evaluator() -> Callable[[chess.Board], float]:
     _antisymmetric = bool(_config.get("antisymmetric", False))
     evaluator_class: type[QuantizedEvaluator] = {
         "reference": QuantizedEvaluator,
+        "integer": IntegerQuantizedEvaluator,
         "incremental": IncrementalQuantizedEvaluator,
         "buffered": BufferedIncrementalQuantizedEvaluator,
     }[_runtime_mode]

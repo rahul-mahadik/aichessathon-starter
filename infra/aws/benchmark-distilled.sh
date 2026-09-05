@@ -37,8 +37,8 @@ for mode in "$CANDIDATE_SEARCH" "$OPPONENT_SEARCH"; do
   fi
 done
 for mode in "$CANDIDATE_RUNTIME" "$OPPONENT_RUNTIME"; do
-  if [[ "$mode" != "reference" && "$mode" != "incremental" && "$mode" != "buffered" ]]; then
-    echo "runtime mode must be reference, incremental, or buffered: $mode" >&2
+  if [[ "$mode" != "reference" && "$mode" != "integer" && "$mode" != "incremental" && "$mode" != "buffered" ]]; then
+    echo "runtime mode must be reference, integer, incremental, or buffered: $mode" >&2
     exit 2
   fi
 done

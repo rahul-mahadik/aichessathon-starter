@@ -24,6 +24,7 @@ from distill.schema import Candidate, TeacherRecord, TeacherScore, read_records,
 from nnue_runtime import (
     BufferedIncrementalQuantizedEvaluator,
     IncrementalQuantizedEvaluator,
+    IntegerQuantizedEvaluator,
     QuantizedEvaluator,
 )
 from training.nnue import SparseValueNetwork, export_quantized, initialize_from_quantized
@@ -366,6 +367,24 @@ class DistillationTests(unittest.TestCase):
             expected = baseline(board) * 0.6
             actual = calibrated(board)
         self.assertAlmostEqual(actual, expected, places=5)
+
+    def test_integer_dense_runtime_tracks_float_runtime(self) -> None:
+        torch.manual_seed(17)
+        model = SparseValueNetwork(accumulator=32, hidden=24, bottleneck=16).eval()
+        boards = [chess.Board()]
+        for move_text in ("e2e4", "c7c5", "g1f3", "d7d6"):
+            board = boards[-1].copy(stack=True)
+            board.push_uci(move_text)
+            boards.append(board)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nnue.npz"
+            export_quantized(model, path)
+            reference = QuantizedEvaluator(path, antisymmetric=True)
+            integer = IntegerQuantizedEvaluator(path, antisymmetric=True)
+            differences = [
+                abs(reference.raw_value(board) - integer.raw_value(board)) for board in boards
+            ]
+        self.assertLess(max(differences), 0.03)
 
     def test_training_reuses_accumulator_for_turn_flip(self) -> None:
         torch.manual_seed(4)

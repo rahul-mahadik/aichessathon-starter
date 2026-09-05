@@ -236,6 +236,107 @@ def _infer_quantized_accumulators(
     return 0.5 * (value - reverse)
 
 
+@njit(cache=False)
+def _dense_value_integer(
+    accumulators: np.ndarray,
+    mover: int,
+    hidden_one_weight_q: np.ndarray,
+    hidden_one_bias_q: np.ndarray,
+    hidden_one_scale: float,
+    hidden_two_weight_q: np.ndarray,
+    hidden_two_bias_q: np.ndarray,
+    hidden_two_scale: float,
+    output_weight_q: np.ndarray,
+    output_bias_q: np.ndarray,
+    output_scale: float,
+) -> float:
+    accumulator_size = accumulators.shape[1]
+    opponent = 1 - mover
+    hidden_one = np.empty(hidden_one_bias_q.shape[0], dtype=np.int64)
+    for output in range(hidden_one.shape[0]):
+        value = np.int64(hidden_one_bias_q[output])
+        for column in range(accumulator_size):
+            value += np.int64(hidden_one_weight_q[output, column]) * np.int64(
+                accumulators[mover, column]
+            )
+            value += np.int64(hidden_one_weight_q[output, accumulator_size + column]) * np.int64(
+                accumulators[opponent, column]
+            )
+        hidden_one[output] = max(value, 0)
+
+    hidden_two = np.empty(hidden_two_bias_q.shape[0], dtype=np.int64)
+    for output in range(hidden_two.shape[0]):
+        value = np.int64(hidden_two_bias_q[output])
+        for column in range(hidden_one.shape[0]):
+            value += np.int64(hidden_two_weight_q[output, column]) * hidden_one[column]
+        hidden_two[output] = max(value, 0)
+
+    value = np.int64(output_bias_q[0])
+    for column in range(hidden_two.shape[0]):
+        value += np.int64(output_weight_q[0, column]) * hidden_two[column]
+    return float(np.tanh(float(value) * output_scale))
+
+
+@njit(cache=False)
+def _infer_integer_accumulators(
+    accumulators: np.ndarray,
+    white_to_move: bool,
+    hidden_one_weight_q: np.ndarray,
+    hidden_one_bias_q: np.ndarray,
+    hidden_one_scale: float,
+    hidden_two_weight_q: np.ndarray,
+    hidden_two_bias_q: np.ndarray,
+    hidden_two_scale: float,
+    output_weight_q: np.ndarray,
+    output_bias_q: np.ndarray,
+    output_scale: float,
+    antisymmetric: bool,
+) -> float:
+    mover = 0 if white_to_move else 1
+    value = _dense_value_integer(
+        accumulators,
+        mover,
+        hidden_one_weight_q,
+        hidden_one_bias_q,
+        hidden_one_scale,
+        hidden_two_weight_q,
+        hidden_two_bias_q,
+        hidden_two_scale,
+        output_weight_q,
+        output_bias_q,
+        output_scale,
+    )
+    if not antisymmetric:
+        return value
+    reverse = _dense_value_integer(
+        accumulators,
+        1 - mover,
+        hidden_one_weight_q,
+        hidden_one_bias_q,
+        hidden_one_scale,
+        hidden_two_weight_q,
+        hidden_two_bias_q,
+        hidden_two_scale,
+        output_weight_q,
+        output_bias_q,
+        output_scale,
+    )
+    return 0.5 * (value - reverse)
+
+
+def _quantize_effective_layer(
+    weight: np.ndarray,
+    bias: np.ndarray,
+    input_scale: float,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    effective = weight.astype(np.float64) * input_scale
+    maximum = float(np.max(np.abs(effective)))
+    output_scale = max(maximum / 127.0, 1e-12)
+    weight_q = np.rint(effective / output_scale).clip(-127, 127).astype(np.int8)
+    bias_q = np.rint(bias.astype(np.float64) / output_scale).astype(np.int64)
+    return weight_q, bias_q, output_scale
+
+
 class QuantizedEvaluator:
     """Load and evaluate the team's versioned ``weights/nnue.npz`` artifact."""
 
@@ -290,11 +391,84 @@ class QuantizedEvaluator:
         self.raw_value(chess.Board())
 
 
+class IntegerQuantizedEvaluator(QuantizedEvaluator):
+    """Use an int8/int64 dense head derived from the exported float weights."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
+        super().__init__(
+            path,
+            antisymmetric=antisymmetric,
+            value_scale_cp=value_scale_cp,
+        )
+        doubled_bias = np.concatenate((self.feature_bias, self.feature_bias))
+        first_bias = self.hidden_one_bias + self.hidden_one_weight @ doubled_bias
+        (
+            self.hidden_one_weight_q,
+            self.hidden_one_bias_q,
+            self.hidden_one_scale,
+        ) = _quantize_effective_layer(
+            self.hidden_one_weight,
+            first_bias,
+            self.feature_scale,
+        )
+        (
+            self.hidden_two_weight_q,
+            self.hidden_two_bias_q,
+            self.hidden_two_scale,
+        ) = _quantize_effective_layer(
+            self.hidden_two_weight,
+            self.hidden_two_bias,
+            self.hidden_one_scale,
+        )
+        (
+            self.output_weight_q,
+            self.output_bias_q,
+            self.output_scale,
+        ) = _quantize_effective_layer(
+            self.output_weight,
+            self.output_bias,
+            self.hidden_two_scale,
+        )
+
+    def raw_value(self, board: chess.Board) -> float:
+        accumulators = _quantized_accumulators(encode_board(board), self.feature_q)
+        return _infer_integer_accumulators(
+            accumulators,
+            board.turn == chess.WHITE,
+            self.hidden_one_weight_q,
+            self.hidden_one_bias_q,
+            self.hidden_one_scale,
+            self.hidden_two_weight_q,
+            self.hidden_two_bias_q,
+            self.hidden_two_scale,
+            self.output_weight_q,
+            self.output_bias_q,
+            self.output_scale,
+            self.antisymmetric,
+        )
+
+
 class IncrementalQuantizedEvaluator(QuantizedEvaluator):
     """Quantized evaluator with move-stack-aware NNUE accumulator updates."""
 
-    def __init__(self, path: Path, *, antisymmetric: bool = False) -> None:
-        super().__init__(path, antisymmetric=antisymmetric)
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
+        super().__init__(
+            path,
+            antisymmetric=antisymmetric,
+            value_scale_cp=value_scale_cp,
+        )
         self._accumulator_stack: list[np.ndarray] = []
         self._king_stack: list[tuple[chess.Square, chess.Square]] = []
 
@@ -439,8 +613,18 @@ class BufferedIncrementalQuantizedEvaluator(QuantizedEvaluator):
 
     MAX_STACK_PLY = 128
 
-    def __init__(self, path: Path, *, antisymmetric: bool = False) -> None:
-        super().__init__(path, antisymmetric=antisymmetric)
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
+        super().__init__(
+            path,
+            antisymmetric=antisymmetric,
+            value_scale_cp=value_scale_cp,
+        )
         width = self.feature_q.shape[1]
         self._accumulators = np.empty((self.MAX_STACK_PLY + 1, 2, width), dtype=np.int32)
         self._kings = np.empty((self.MAX_STACK_PLY + 1, 2), dtype=np.int16)
