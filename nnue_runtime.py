@@ -276,14 +276,18 @@ def _dense_value_integer(
             value += np.int64(hidden_one_weight_q[output, accumulator_size + column]) * np.int64(
                 accumulators[opponent, column]
             )
-        hidden_one[output] = max(value, 0)
+        if value < 0:
+            value = np.int64(0)
+        hidden_one[output] = value
 
     hidden_two = np.empty(hidden_two_bias_q.shape[0], dtype=np.int64)
     for output in range(hidden_two.shape[0]):
         value = np.int64(hidden_two_bias_q[output])
         for column in range(hidden_one.shape[0]):
             value += np.int64(hidden_two_weight_q[output, column]) * hidden_one[column]
-        hidden_two[output] = max(value, 0)
+        if value < 0:
+            value = np.int64(0)
+        hidden_two[output] = value
 
     value = np.int64(output_bias_q[0])
     for column in range(hidden_two.shape[0]):
