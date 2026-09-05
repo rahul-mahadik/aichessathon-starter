@@ -111,5 +111,20 @@ The two heads reduce antisymmetric dense work from roughly 2.36 million multiply
 about 266 thousand and 133 thousand respectively. Both remain evaluator experiments until they
 pass the clock-free holdout and fixed-node gates.
 
+## Event-rating calibration
+
+`benchmarks/calibration-openings.epd` contains 64 deterministic, training-held-out positions with
+deep teacher scores within 50 centipawns of equality and a fullmove number no later than 20. A
+colour-paired match against the pinned Sunfish research control provides an approximate bridge to
+the live event's House Sunfish rating:
+
+```bash
+DISTILL_RUN_ID=phase-d-20260903a bash infra/aws/calibrate-sunfish.sh
+```
+
+This estimate must retain two uncertainty sources: the match confidence interval and the possibility
+that the event's House Sunfish wrapper differs from the pinned control. The actual ladder rating after
+an uploaded build remains the authoritative event-specific measurement.
+
 Raw nodes, evaluator calls, and elapsed time should all be retained. Once pruning changes, equal
 node counts no longer imply equal leaf-evaluation work.
