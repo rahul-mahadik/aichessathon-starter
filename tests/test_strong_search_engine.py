@@ -9,6 +9,7 @@ import chess
 from frontier_search_engine import FrontierSearchEngine
 from ordered_search_engine import OrderedSearchEngine
 from policy_search_engine import PolicySearchEngine
+from policy_see_search_engine import PolicySeeSearchEngine
 from search_engine import handcrafted_evaluation
 from see_search_engine import SeeSearchEngine
 from strong_search_engine import StrongSearchEngine
@@ -75,6 +76,11 @@ class StrongSearchEngineTests(unittest.TestCase):
         result = PolicySearchEngine(PolicyEvaluator()).choose_fixed_nodes(board, 1_000)
         self.assertIn(result.move, board.legal_moves)
         self.assertEqual(result.nodes, 1_000)
+        self.assertEqual(board.fen(), original)
+
+        combined = PolicySeeSearchEngine(PolicyEvaluator()).choose_fixed_nodes(board, 1_000)
+        self.assertIn(combined.move, board.legal_moves)
+        self.assertEqual(combined.nodes, 1_000)
         self.assertEqual(board.fen(), original)
 
     def test_static_exchange_distinguishes_winning_and_losing_captures(self) -> None:

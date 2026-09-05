@@ -13,11 +13,13 @@ from nnue_runtime import (
     BufferedIncrementalQuantizedEvaluator,
     IncrementalQuantizedEvaluator,
     IntegerQuantizedEvaluator,
+    PolicyIntegerQuantizedEvaluator,
     PolicyQuantizedEvaluator,
     QuantizedEvaluator,
 )
 from ordered_search_engine import OrderedSearchEngine
 from policy_search_engine import PolicySearchEngine
+from policy_see_search_engine import PolicySeeSearchEngine
 from search_engine import SearchEngine, handcrafted_evaluation
 from see_search_engine import SeeSearchEngine
 from strong_search_engine import StrongSearchEngine
@@ -39,7 +41,15 @@ if not 1 <= _ponder_max_ms <= 120_000:
     raise ValueError("ponder_max_ms must be between 1 and 120000")
 if _value_scale_cp <= 0:
     raise ValueError("value_scale_cp must be positive")
-if _search_mode not in {"baseline", "strong", "ordered", "policy", "see", "frontier"}:
+if _search_mode not in {
+    "baseline",
+    "strong",
+    "ordered",
+    "policy",
+    "policy-see",
+    "see",
+    "frontier",
+}:
     raise ValueError(f"unsupported search mode: {_search_mode}")
 if _runtime_mode not in {"reference", "integer", "incremental", "buffered"}:
     raise ValueError(f"unsupported NNUE runtime mode: {_runtime_mode}")
@@ -55,10 +65,14 @@ def _load_evaluator() -> Callable[[chess.Board], float]:
         "incremental": IncrementalQuantizedEvaluator,
         "buffered": BufferedIncrementalQuantizedEvaluator,
     }[_runtime_mode]
-    if _search_mode == "policy":
-        if _runtime_mode != "reference":
-            raise ValueError("policy search currently requires reference runtime")
-        evaluator_class = PolicyQuantizedEvaluator
+    if _search_mode in {"policy", "policy-see"}:
+        if _runtime_mode not in {"reference", "integer"}:
+            raise ValueError("policy search requires reference or integer runtime")
+        evaluator_class = (
+            PolicyIntegerQuantizedEvaluator
+            if _runtime_mode == "integer"
+            else PolicyQuantizedEvaluator
+        )
     learned = evaluator_class(
         _WEIGHTS,
         antisymmetric=_antisymmetric,
@@ -69,6 +83,8 @@ def _load_evaluator() -> Callable[[chess.Board], float]:
 
 
 def _make_search(evaluator: Callable[[chess.Board], float]) -> SearchEngine | StrongSearchEngine:
+    if _search_mode == "policy-see":
+        return PolicySeeSearchEngine(evaluator)
     if _search_mode == "policy":
         return PolicySearchEngine(evaluator)
     if _search_mode == "see":

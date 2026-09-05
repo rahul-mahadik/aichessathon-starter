@@ -452,21 +452,10 @@ class QuantizedEvaluator:
         self.raw_value(chess.Board())
 
 
-class PolicyQuantizedEvaluator(QuantizedEvaluator):
-    """Value evaluator plus a compact factorized legal-move policy head."""
+class _PolicyHeadMixin:
+    """Load and execute the policy arrays shared by float and integer values."""
 
-    def __init__(
-        self,
-        path: Path,
-        *,
-        antisymmetric: bool = False,
-        value_scale_cp: float = VALUE_SCALE_CP,
-    ) -> None:
-        super().__init__(
-            path,
-            antisymmetric=antisymmetric,
-            value_scale_cp=value_scale_cp,
-        )
+    def _load_policy_head(self, path: Path) -> None:
         with np.load(path, allow_pickle=False) as archive:
             if "policy_format_version" not in archive.files:
                 raise ValueError("NNUE artifact has no policy head")
@@ -524,6 +513,24 @@ class PolicyQuantizedEvaluator(QuantizedEvaluator):
         if board.turn == chess.WHITE:
             return metadata
         return np.concatenate((metadata[2:4], metadata[:2], metadata[4:]))
+
+
+class PolicyQuantizedEvaluator(_PolicyHeadMixin, QuantizedEvaluator):
+    """Float value evaluator plus a compact factorized legal-move policy head."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
+        super().__init__(
+            path,
+            antisymmetric=antisymmetric,
+            value_scale_cp=value_scale_cp,
+        )
+        self._load_policy_head(path)
 
 
 class IntegerQuantizedEvaluator(QuantizedEvaluator):
@@ -587,6 +594,24 @@ class IntegerQuantizedEvaluator(QuantizedEvaluator):
             self.output_scale,
             self.antisymmetric,
         )
+
+
+class PolicyIntegerQuantizedEvaluator(_PolicyHeadMixin, IntegerQuantizedEvaluator):
+    """Integer value evaluator with the same independently trained policy head."""
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
+        super().__init__(
+            path,
+            antisymmetric=antisymmetric,
+            value_scale_cp=value_scale_cp,
+        )
+        self._load_policy_head(path)
 
 
 class IncrementalQuantizedEvaluator(QuantizedEvaluator):

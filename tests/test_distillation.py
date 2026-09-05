@@ -33,6 +33,7 @@ from nnue_runtime import (
     BufferedIncrementalQuantizedEvaluator,
     IncrementalQuantizedEvaluator,
     IntegerQuantizedEvaluator,
+    PolicyIntegerQuantizedEvaluator,
     PolicyQuantizedEvaluator,
     QuantizedEvaluator,
 )
@@ -424,6 +425,9 @@ class DistillationTests(unittest.TestCase):
             export_policy(policy, base, combined, {})
             evaluator = PolicyQuantizedEvaluator(combined)
             actual = evaluator.policy_scores(board, moves)
+            integer_evaluator = PolicyIntegerQuantizedEvaluator(combined)
+            integer_policy = integer_evaluator.policy_scores(board, moves)
+            integer_evaluator.raw_value(board)
 
         features = torch.as_tensor(encode_board(board)).long().unsqueeze(0)
         turns = torch.tensor([board.turn])
@@ -442,6 +446,12 @@ class DistillationTests(unittest.TestCase):
             )[0].numpy()
         np.testing.assert_allclose(
             np.array([actual[move] for move in moves]), expected, rtol=1e-5, atol=1e-5
+        )
+        np.testing.assert_allclose(
+            np.array([integer_policy[move] for move in moves]),
+            expected,
+            rtol=1e-5,
+            atol=1e-5,
         )
 
     def test_metadata_runtime_tracks_pytorch_and_preserves_antisymmetry(self) -> None:
