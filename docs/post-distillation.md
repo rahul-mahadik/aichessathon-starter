@@ -47,11 +47,11 @@ a control and directly tests whether Python/NumPy allocation overhead caused its
 Run `infra/aws/phase-f-runtime-sweep.sh MODEL` for buffered-versus-reference and
 buffered-versus-incremental clock matches.
 
-The optional pondering track uses a separate evaluator and search object after our move returns.
-It searches the full opponent-to-move position, accepts an external stop request on the next agent
-call, and imports only completed TT, history, and countermove entries into the foreground engine.
-This avoids guessing a single opponent reply and prevents a background search from racing the move
-search. Run `infra/aws/phase-g-ponder-sweep.sh MODEL` for the paired clock gate.
+The historical pondering experiment uses a separate evaluator and search object after our move
+returns. It produced positive local-harness results, but the live platform now suspends the agent
+process while the opponent moves. Those results therefore do not predict ladder strength and
+pondering must remain disabled in submission configurations. Persistent foreground TT, history,
+and countermove state still survive between our own moves.
 
 An initial local 128/64/32 smoke profile used identical random weights and a 20,000-node strong
 search. Both runtimes returned the same move with 11,346 evaluator calls. Reference inference took

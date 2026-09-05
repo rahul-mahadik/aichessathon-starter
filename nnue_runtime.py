@@ -33,9 +33,8 @@ def encode_board(board: chess.Board) -> np.ndarray:
             relative_colour = 0 if piece.color == perspective else 1
             category = relative_colour * 6 + piece.piece_type - 1
             encoded[perspective_index, offset] = (
-                (oriented_king * PIECE_CATEGORIES + category) * 64
-                + _orient(piece_square, perspective)
-            )
+                oriented_king * PIECE_CATEGORIES + category
+            ) * 64 + _orient(piece_square, perspective)
     return encoded
 
 
@@ -240,7 +239,13 @@ def _infer_quantized_accumulators(
 class QuantizedEvaluator:
     """Load and evaluate the team's versioned ``weights/nnue.npz`` artifact."""
 
-    def __init__(self, path: Path, *, antisymmetric: bool = False) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        antisymmetric: bool = False,
+        value_scale_cp: float = VALUE_SCALE_CP,
+    ) -> None:
         with np.load(path, allow_pickle=False) as archive:
             version = int(archive["format_version"])
             feature_dim = int(archive["feature_dim"])
@@ -258,6 +263,9 @@ class QuantizedEvaluator:
             self.output_weight = archive["output_weight"].copy()
             self.output_bias = archive["output_bias"].copy()
         self.antisymmetric = antisymmetric
+        if value_scale_cp <= 0:
+            raise ValueError("value_scale_cp must be positive")
+        self.value_scale_cp = value_scale_cp
 
     def raw_value(self, board: chess.Board) -> float:
         return _infer(
@@ -276,7 +284,7 @@ class QuantizedEvaluator:
         )
 
     def __call__(self, board: chess.Board) -> float:
-        return VALUE_SCALE_CP * self.raw_value(board)
+        return self.value_scale_cp * self.raw_value(board)
 
     def warmup(self) -> None:
         self.raw_value(chess.Board())
@@ -299,9 +307,8 @@ class IncrementalQuantizedEvaluator(QuantizedEvaluator):
     ) -> int:
         relative_colour = 0 if piece.color == perspective else 1
         category = relative_colour * 6 + piece.piece_type - 1
-        return (
-            (_orient(king_square, perspective) * PIECE_CATEGORIES + category) * 64
-            + _orient(piece_square, perspective)
+        return (_orient(king_square, perspective) * PIECE_CATEGORIES + category) * 64 + _orient(
+            piece_square, perspective
         )
 
     def begin(self, board: chess.Board) -> None:
@@ -310,9 +317,7 @@ class IncrementalQuantizedEvaluator(QuantizedEvaluator):
         if white_king is None or black_king is None:
             raise ValueError("position must contain both kings")
         self._king_stack = [(white_king, black_king)]
-        self._accumulator_stack = [
-            _quantized_accumulators(encode_board(board), self.feature_q)
-        ]
+        self._accumulator_stack = [_quantized_accumulators(encode_board(board), self.feature_q)]
 
     def push(self, board: chess.Board, move: chess.Move) -> None:
         """Update state for ``move`` while ``board`` is still the parent position."""
@@ -437,9 +442,7 @@ class BufferedIncrementalQuantizedEvaluator(QuantizedEvaluator):
     def __init__(self, path: Path, *, antisymmetric: bool = False) -> None:
         super().__init__(path, antisymmetric=antisymmetric)
         width = self.feature_q.shape[1]
-        self._accumulators = np.empty(
-            (self.MAX_STACK_PLY + 1, 2, width), dtype=np.int32
-        )
+        self._accumulators = np.empty((self.MAX_STACK_PLY + 1, 2, width), dtype=np.int32)
         self._kings = np.empty((self.MAX_STACK_PLY + 1, 2), dtype=np.int16)
         self._removed = np.full((2, MAX_PIECES), PADDING_INDEX, dtype=np.int32)
         self._added = np.full((2, MAX_PIECES), PADDING_INDEX, dtype=np.int32)
@@ -452,9 +455,7 @@ class BufferedIncrementalQuantizedEvaluator(QuantizedEvaluator):
         if white_king is None or black_king is None:
             raise ValueError("position must contain both kings")
         self._depth = 0
-        self._accumulators[0] = _quantized_accumulators(
-            encode_board(board), self.feature_q
-        )
+        self._accumulators[0] = _quantized_accumulators(encode_board(board), self.feature_q)
         self._kings[0] = (white_king, black_king)
 
     def push(self, board: chess.Board, move: chess.Move) -> None:
@@ -527,10 +528,8 @@ class BufferedIncrementalQuantizedEvaluator(QuantizedEvaluator):
                     )
                 )
             for slot, (square, piece) in enumerate(added_pieces):
-                self._added[perspective_index, slot] = (
-                    IncrementalQuantizedEvaluator._feature_index(
-                        child_king, perspective, square, piece
-                    )
+                self._added[perspective_index, slot] = IncrementalQuantizedEvaluator._feature_index(
+                    child_king, perspective, square, piece
                 )
 
         _apply_quantized_delta_into(

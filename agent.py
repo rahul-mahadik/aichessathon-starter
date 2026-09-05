@@ -30,8 +30,11 @@ _runtime_mode = str(
 )
 _ponder_enabled = bool(_config.get("ponder", False))
 _ponder_max_ms = int(str(_config.get("ponder_max_ms", 60_000)))
+_value_scale_cp = float(str(_config.get("value_scale_cp", 1_000.0)))
 if not 1 <= _ponder_max_ms <= 120_000:
     raise ValueError("ponder_max_ms must be between 1 and 120000")
+if _value_scale_cp <= 0:
+    raise ValueError("value_scale_cp must be positive")
 if _search_mode not in {"baseline", "strong", "ordered", "frontier"}:
     raise ValueError(f"unsupported search mode: {_search_mode}")
 if _runtime_mode not in {"reference", "incremental", "buffered"}:
@@ -47,7 +50,11 @@ def _load_evaluator() -> Callable[[chess.Board], float]:
         "incremental": IncrementalQuantizedEvaluator,
         "buffered": BufferedIncrementalQuantizedEvaluator,
     }[_runtime_mode]
-    learned = evaluator_class(_WEIGHTS, antisymmetric=_antisymmetric)
+    learned = evaluator_class(
+        _WEIGHTS,
+        antisymmetric=_antisymmetric,
+        value_scale_cp=_value_scale_cp,
+    )
     learned.warmup()
     return learned
 

@@ -58,7 +58,7 @@ Before an upload:
 1. Confirm the model was trained by the team and document its data and code revision.
 2. Load it with only the competition's approved packages.
 3. Set all inference libraries to one CPU thread.
-4. Verify import completes within 60 seconds.
+4. Verify import completes within 90 seconds.
 5. Run paired games from several non-starting positions.
 6. Inspect the ZIP root and its uncompressed size.
 

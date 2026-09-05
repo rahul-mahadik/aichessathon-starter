@@ -13,6 +13,8 @@ OPPONENT_SEARCH="${DISTILL_OPPONENT_SEARCH:-baseline}"
 OPPONENT_RUNTIME="${DISTILL_OPPONENT_RUNTIME:-reference}"
 CANDIDATE_PONDER="${DISTILL_CANDIDATE_PONDER:-0}"
 OPPONENT_PONDER="${DISTILL_OPPONENT_PONDER:-0}"
+CANDIDATE_VALUE_SCALE_CP="${DISTILL_CANDIDATE_VALUE_SCALE_CP:-1000}"
+OPPONENT_VALUE_SCALE_CP="${DISTILL_OPPONENT_VALUE_SCALE_CP:-1000}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 WORKERS="${BENCH_WORKERS:-3}"
@@ -59,13 +61,15 @@ fi
 jq -n \
   --argjson antisymmetric "$candidate_antisymmetric" \
   --argjson ponder "$candidate_ponder" \
+  --argjson value_scale_cp "$CANDIDATE_VALUE_SCALE_CP" \
   --arg search "$CANDIDATE_SEARCH" \
   --arg runtime "$CANDIDATE_RUNTIME" \
-  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime,ponder:$ponder}' \
+  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime,ponder:$ponder,value_scale_cp:$value_scale_cp}' \
   >"$CANDIDATE/weights/evaluator.json"
 export BENCH_CANDIDATE_MODEL="$VARIANT_NAME"
 export BENCH_CANDIDATE_SEARCH="$CANDIDATE_SEARCH"
 export BENCH_CANDIDATE_RUNTIME="$CANDIDATE_RUNTIME"
+export BENCH_CANDIDATE_VALUE_SCALE_CP="$CANDIDATE_VALUE_SCALE_CP"
 export BENCH_CANDIDATE_SHA256
 BENCH_CANDIDATE_SHA256="$(sha256sum "$CANDIDATE/weights/nnue.npz" | cut -d ' ' -f 1)"
 opponent_antisymmetric=false
@@ -79,9 +83,10 @@ fi
 jq -n \
   --argjson antisymmetric "$opponent_antisymmetric" \
   --argjson ponder "$opponent_ponder" \
+  --argjson value_scale_cp "$OPPONENT_VALUE_SCALE_CP" \
   --arg search "$OPPONENT_SEARCH" \
   --arg runtime "$OPPONENT_RUNTIME" \
-  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime,ponder:$ponder}' \
+  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime,ponder:$ponder,value_scale_cp:$value_scale_cp}' \
   >"$OPPONENT/weights/evaluator.json"
 if [[ "$OPPONENT_MODEL_NAME" != "fallback" ]]; then
   aws s3 cp "$RUN_PREFIX/models/$OPPONENT_MODEL_NAME/${OPPONENT_MODEL_NAME}.npz" \
@@ -92,6 +97,7 @@ fi
 export BENCH_OPPONENT_MODEL="$OPPONENT_MODEL_NAME"
 export BENCH_OPPONENT_SEARCH="$OPPONENT_SEARCH"
 export BENCH_OPPONENT_RUNTIME="$OPPONENT_RUNTIME"
+export BENCH_OPPONENT_VALUE_SCALE_CP="$OPPONENT_VALUE_SCALE_CP"
 
 BENCH_AGENT="$CANDIDATE" \
 BENCH_OPPONENT="$OPPONENT" \

@@ -354,6 +354,19 @@ class DistillationTests(unittest.TestCase):
             actual = QuantizedEvaluator(path).raw_value(board)
         self.assertAlmostEqual(actual, expected, delta=0.02)
 
+    def test_quantized_runtime_uses_configured_value_scale(self) -> None:
+        torch.manual_seed(13)
+        model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
+        board = chess.Board()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nnue.npz"
+            export_quantized(model, path)
+            baseline = QuantizedEvaluator(path, value_scale_cp=1_000.0)
+            calibrated = QuantizedEvaluator(path, value_scale_cp=600.0)
+            expected = baseline(board) * 0.6
+            actual = calibrated(board)
+        self.assertAlmostEqual(actual, expected, places=5)
+
     def test_training_reuses_accumulator_for_turn_flip(self) -> None:
         torch.manual_seed(4)
         model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
@@ -377,9 +390,7 @@ class DistillationTests(unittest.TestCase):
                 )
 
         self.assertEqual(copied, ["feature", "feature_bias"])
-        np.testing.assert_allclose(
-            student.feature.weight[:FEATURE_DIM].detach().numpy(), expected
-        )
+        np.testing.assert_allclose(student.feature.weight[:FEATURE_DIM].detach().numpy(), expected)
         np.testing.assert_allclose(
             student.feature_bias.detach().numpy(), teacher.feature_bias.detach().numpy()
         )
