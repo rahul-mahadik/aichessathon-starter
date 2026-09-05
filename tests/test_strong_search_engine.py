@@ -9,6 +9,7 @@ import chess
 from frontier_search_engine import FrontierSearchEngine
 from ordered_search_engine import OrderedSearchEngine
 from search_engine import handcrafted_evaluation
+from see_search_engine import SeeSearchEngine
 from strong_search_engine import StrongSearchEngine
 
 
@@ -57,6 +58,20 @@ class StrongSearchEngineTests(unittest.TestCase):
         result = OrderedSearchEngine(handcrafted_evaluation).choose(board, 1_000)
         board.push(result.move)
         self.assertTrue(board.is_checkmate(), result.move.uci())
+
+    def test_static_exchange_distinguishes_winning_and_losing_captures(self) -> None:
+        winning = chess.Board("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1")
+        losing = chess.Board("3rk3/8/8/3p4/4Q3/8/8/4K3 w - - 0 1")
+        self.assertGreater(SeeSearchEngine.static_exchange(winning, chess.Move.from_uci("e4d5")), 0)
+        self.assertLess(SeeSearchEngine.static_exchange(losing, chess.Move.from_uci("e4d5")), 0)
+
+    def test_see_search_is_bounded_and_restores_board(self) -> None:
+        board = chess.Board()
+        original = board.fen()
+        result = SeeSearchEngine(handcrafted_evaluation).choose_fixed_nodes(board, 1_000)
+        self.assertIn(result.move, board.legal_moves)
+        self.assertEqual(result.nodes, 1_000)
+        self.assertEqual(board.fen(), original)
 
     def test_stopped_ponder_state_can_be_absorbed(self) -> None:
         board = chess.Board()
