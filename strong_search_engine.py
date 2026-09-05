@@ -67,6 +67,7 @@ class StrongSearchEngine:
         self.nodes = 0
         self.evaluations = 0
         self.generation = 0
+        self._stop_requested = False
 
     def _evaluate(self, board: chess.Board) -> int:
         self.evaluations += 1
@@ -95,6 +96,8 @@ class StrongSearchEngine:
 
     def _visit(self) -> None:
         self.nodes += 1
+        if self._stop_requested:
+            raise SearchTimeout
         if self.node_limit is not None:
             if self.nodes >= self.node_limit:
                 raise SearchTimeout
@@ -499,6 +502,7 @@ class StrongSearchEngine:
         if not legal:
             raise ValueError("cannot choose a move in a terminal position")
         started = time.monotonic()
+        self._stop_requested = False
         self.generation += 1
         self._trim_state()
         self.node_limit = node_limit
@@ -551,3 +555,31 @@ class StrongSearchEngine:
         if node_limit < 1:
             raise ValueError("node_limit must be positive")
         return self._choose(board, budget_ms=None, node_limit=node_limit)
+
+    def choose_for_ms(self, board: chess.Board, budget_ms: int) -> SearchResult:
+        """Search for an explicit wall-time budget, primarily for pondering."""
+        if budget_ms < 1:
+            raise ValueError("budget_ms must be positive")
+        return self._choose(board, budget_ms=budget_ms, node_limit=None)
+
+    def request_stop(self) -> None:
+        """Ask an active search to stop at its next visited node."""
+        self._stop_requested = True
+
+    def absorb(self, other: StrongSearchEngine) -> None:
+        """Import completed, position-keyed knowledge from an idle engine."""
+        for key, entry in other.table.items():
+            current = self.table.get(key)
+            if current is None or entry.depth > current.depth:
+                self.table[key] = TTEntry(
+                    depth=entry.depth,
+                    score=entry.score,
+                    bound=entry.bound,
+                    move=entry.move,
+                    generation=self.generation,
+                )
+        for history_key, value in other.history.items():
+            self.history[history_key] = max(self.history.get(history_key, 0), value)
+        for counter_key, move in other.countermoves.items():
+            self.countermoves.setdefault(counter_key, move)
+        self._trim_state()

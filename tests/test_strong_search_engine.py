@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 
 import chess
@@ -39,6 +41,29 @@ class StrongSearchEngineTests(unittest.TestCase):
         result = FrontierSearchEngine(handcrafted_evaluation).choose(board, 1_000)
         board.push(result.move)
         self.assertTrue(board.is_checkmate(), result.move.uci())
+
+    def test_stopped_ponder_state_can_be_absorbed(self) -> None:
+        board = chess.Board()
+        pondering = StrongSearchEngine(handcrafted_evaluation)
+        pondering.choose_fixed_nodes(board, 1_000)
+        foreground = StrongSearchEngine(handcrafted_evaluation)
+        foreground.absorb(pondering)
+        self.assertTrue(foreground.table)
+        for key, entry in pondering.table.items():
+            if key in foreground.table:
+                self.assertGreaterEqual(foreground.table[key].depth, entry.depth)
+
+    def test_external_stop_ends_search_and_restores_board(self) -> None:
+        board = chess.Board()
+        original = board.fen()
+        engine = StrongSearchEngine(handcrafted_evaluation)
+        thread = threading.Thread(target=engine.choose_for_ms, args=(board, 5_000))
+        thread.start()
+        time.sleep(0.02)
+        engine.request_stop()
+        thread.join(timeout=1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(board.fen(), original)
 
 
 if __name__ == "__main__":

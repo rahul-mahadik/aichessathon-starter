@@ -11,6 +11,8 @@ CANDIDATE_SEARCH="${DISTILL_CANDIDATE_SEARCH:-baseline}"
 CANDIDATE_RUNTIME="${DISTILL_CANDIDATE_RUNTIME:-reference}"
 OPPONENT_SEARCH="${DISTILL_OPPONENT_SEARCH:-baseline}"
 OPPONENT_RUNTIME="${DISTILL_OPPONENT_RUNTIME:-reference}"
+CANDIDATE_PONDER="${DISTILL_CANDIDATE_PONDER:-0}"
+OPPONENT_PONDER="${DISTILL_OPPONENT_PONDER:-0}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 ROUNDS="${BENCH_ROUNDS:-10}"
 WORKERS="${BENCH_WORKERS:-3}"
@@ -50,11 +52,16 @@ candidate_antisymmetric=false
 if [[ "$CANDIDATE_ANTISYMMETRIC" == "1" ]]; then
   candidate_antisymmetric=true
 fi
+candidate_ponder=false
+if [[ "$CANDIDATE_PONDER" == "1" ]]; then
+  candidate_ponder=true
+fi
 jq -n \
   --argjson antisymmetric "$candidate_antisymmetric" \
+  --argjson ponder "$candidate_ponder" \
   --arg search "$CANDIDATE_SEARCH" \
   --arg runtime "$CANDIDATE_RUNTIME" \
-  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime}' \
+  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime,ponder:$ponder}' \
   >"$CANDIDATE/weights/evaluator.json"
 export BENCH_CANDIDATE_MODEL="$VARIANT_NAME"
 export BENCH_CANDIDATE_SEARCH="$CANDIDATE_SEARCH"
@@ -65,11 +72,16 @@ opponent_antisymmetric=false
 if [[ "$OPPONENT_ANTISYMMETRIC" == "1" ]]; then
   opponent_antisymmetric=true
 fi
+opponent_ponder=false
+if [[ "$OPPONENT_PONDER" == "1" ]]; then
+  opponent_ponder=true
+fi
 jq -n \
   --argjson antisymmetric "$opponent_antisymmetric" \
+  --argjson ponder "$opponent_ponder" \
   --arg search "$OPPONENT_SEARCH" \
   --arg runtime "$OPPONENT_RUNTIME" \
-  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime}' \
+  '{antisymmetric:$antisymmetric,search:$search,runtime:$runtime,ponder:$ponder}' \
   >"$OPPONENT/weights/evaluator.json"
 if [[ "$OPPONENT_MODEL_NAME" != "fallback" ]]; then
   aws s3 cp "$RUN_PREFIX/models/$OPPONENT_MODEL_NAME/${OPPONENT_MODEL_NAME}.npz" \
