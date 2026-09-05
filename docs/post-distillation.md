@@ -41,6 +41,12 @@ The incremental runtime rebuilds one perspective only when that perspective's ki
 moves, captures, promotion, en passant, castling-rook movement, null moves, and unwind use integer
 feature-table deltas. Tests compare it to full recomputation at every push and pop.
 
+The separately selectable `buffered` runtime keeps the same arithmetic while preallocating its
+accumulator move stack and delta scratch space. This preserves the original incremental runtime as
+a control and directly tests whether Python/NumPy allocation overhead caused its first clock loss.
+Run `infra/aws/phase-f-runtime-sweep.sh MODEL` for buffered-versus-reference and
+buffered-versus-incremental clock matches.
+
 An initial local 128/64/32 smoke profile used identical random weights and a 20,000-node strong
 search. Both runtimes returned the same move with 11,346 evaluator calls. Reference inference took
 1.987 seconds (5,709 calls/s); incremental inference took 1.507 seconds (7,530 calls/s), about 32%

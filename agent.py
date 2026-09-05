@@ -8,7 +8,11 @@ from pathlib import Path
 import chess
 
 from frontier_search_engine import FrontierSearchEngine
-from nnue_runtime import IncrementalQuantizedEvaluator, QuantizedEvaluator
+from nnue_runtime import (
+    BufferedIncrementalQuantizedEvaluator,
+    IncrementalQuantizedEvaluator,
+    QuantizedEvaluator,
+)
 from search_engine import SearchEngine, handcrafted_evaluation
 from strong_search_engine import StrongSearchEngine
 
@@ -24,14 +28,16 @@ _runtime_mode = str(
 )
 if _search_mode not in {"baseline", "strong", "frontier"}:
     raise ValueError(f"unsupported search mode: {_search_mode}")
-if _runtime_mode not in {"reference", "incremental"}:
+if _runtime_mode not in {"reference", "incremental", "buffered"}:
     raise ValueError(f"unsupported NNUE runtime mode: {_runtime_mode}")
 
 if _WEIGHTS.exists():
     _antisymmetric = bool(_config.get("antisymmetric", False))
-    evaluator_class = (
-        IncrementalQuantizedEvaluator if _runtime_mode == "incremental" else QuantizedEvaluator
-    )
+    evaluator_class = {
+        "reference": QuantizedEvaluator,
+        "incremental": IncrementalQuantizedEvaluator,
+        "buffered": BufferedIncrementalQuantizedEvaluator,
+    }[_runtime_mode]
     _learned = evaluator_class(_WEIGHTS, antisymmetric=_antisymmetric)
     _learned.warmup()
     _evaluator: Callable[[chess.Board], float] = _learned

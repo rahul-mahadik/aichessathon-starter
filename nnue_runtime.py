@@ -168,6 +168,35 @@ def _apply_quantized_delta(
 
 
 @njit(cache=False)
+def _apply_quantized_delta_into(
+    parent: np.ndarray,
+    child: np.ndarray,
+    removed: np.ndarray,
+    added: np.ndarray,
+    rebuild: np.ndarray,
+    feature_q: np.ndarray,
+) -> None:
+    """Apply a move into preallocated storage instead of allocating per node."""
+    for perspective in range(2):
+        if rebuild[perspective]:
+            for column in range(child.shape[1]):
+                child[perspective, column] = 0
+        else:
+            for column in range(child.shape[1]):
+                child[perspective, column] = parent[perspective, column]
+            for slot in range(removed.shape[1]):
+                index = removed[perspective, slot]
+                if index < feature_q.shape[0]:
+                    for column in range(child.shape[1]):
+                        child[perspective, column] -= int(feature_q[index, column])
+        for slot in range(added.shape[1]):
+            index = added[perspective, slot]
+            if index < feature_q.shape[0]:
+                for column in range(child.shape[1]):
+                    child[perspective, column] += int(feature_q[index, column])
+
+
+@njit(cache=False)
 def _infer_quantized_accumulators(
     accumulator_q: np.ndarray,
     white_to_move: bool,
@@ -371,6 +400,160 @@ class IncrementalQuantizedEvaluator(QuantizedEvaluator):
             return super().raw_value(board)
         return _infer_quantized_accumulators(
             self._accumulator_stack[-1],
+            board.turn == chess.WHITE,
+            self.feature_scale,
+            self.feature_bias,
+            self.hidden_one_weight,
+            self.hidden_one_bias,
+            self.hidden_two_weight,
+            self.hidden_two_bias,
+            self.output_weight,
+            self.output_bias,
+            self.antisymmetric,
+        )
+
+    def warmup(self) -> None:
+        board = chess.Board()
+        self.begin(board)
+        self.raw_value(board)
+        move = chess.Move.from_uci("e2e4")
+        self.push(board, move)
+        board.push(move)
+        self.raw_value(board)
+        self.pop()
+        board.pop()
+
+
+class BufferedIncrementalQuantizedEvaluator(QuantizedEvaluator):
+    """Incremental evaluator with fixed move-stack and scratch buffers.
+
+    The original incremental evaluator remains available as a frozen control.
+    This version removes the per-push accumulator, index, and king-stack array
+    allocations that become expensive in a one-core Python search.
+    """
+
+    MAX_STACK_PLY = 128
+
+    def __init__(self, path: Path, *, antisymmetric: bool = False) -> None:
+        super().__init__(path, antisymmetric=antisymmetric)
+        width = self.feature_q.shape[1]
+        self._accumulators = np.empty(
+            (self.MAX_STACK_PLY + 1, 2, width), dtype=np.int32
+        )
+        self._kings = np.empty((self.MAX_STACK_PLY + 1, 2), dtype=np.int16)
+        self._removed = np.full((2, MAX_PIECES), PADDING_INDEX, dtype=np.int32)
+        self._added = np.full((2, MAX_PIECES), PADDING_INDEX, dtype=np.int32)
+        self._rebuild = np.zeros(2, dtype=np.bool_)
+        self._depth = -1
+
+    def begin(self, board: chess.Board) -> None:
+        white_king = board.king(chess.WHITE)
+        black_king = board.king(chess.BLACK)
+        if white_king is None or black_king is None:
+            raise ValueError("position must contain both kings")
+        self._depth = 0
+        self._accumulators[0] = _quantized_accumulators(
+            encode_board(board), self.feature_q
+        )
+        self._kings[0] = (white_king, black_king)
+
+    def push(self, board: chess.Board, move: chess.Move) -> None:
+        if self._depth < 0:
+            raise RuntimeError("buffered evaluator was pushed before begin")
+        child_depth = self._depth + 1
+        if child_depth > self.MAX_STACK_PLY:
+            raise RuntimeError("buffered evaluator exceeded its move-stack capacity")
+        if move == chess.Move.null():
+            np.copyto(self._accumulators[child_depth], self._accumulators[self._depth])
+            self._kings[child_depth] = self._kings[self._depth]
+            self._depth = child_depth
+            return
+
+        moving_piece = board.piece_at(move.from_square)
+        if moving_piece is None:
+            raise ValueError(f"no piece on buffered move origin: {move}")
+        captured_square = move.to_square
+        if board.is_en_passant(move):
+            captured_square += -8 if board.turn == chess.WHITE else 8
+        captured_piece = board.piece_at(captured_square)
+        placed_piece = (
+            chess.Piece(move.promotion, moving_piece.color)
+            if move.promotion is not None
+            else moving_piece
+        )
+
+        removed_pieces = [(move.from_square, moving_piece)]
+        added_pieces = [(move.to_square, placed_piece)]
+        if captured_piece is not None:
+            removed_pieces.append((captured_square, captured_piece))
+        if board.is_castling(move):
+            rank = 0 if moving_piece.color == chess.WHITE else 7
+            kingside = board.is_kingside_castling(move)
+            rook_from = chess.square(7 if kingside else 0, rank)
+            rook_to = chess.square(5 if kingside else 3, rank)
+            rook = board.piece_at(rook_from)
+            if rook is None:
+                raise ValueError(f"castling move has no rook: {move}")
+            removed_pieces.append((rook_from, rook))
+            added_pieces.append((rook_to, rook))
+
+        self._removed.fill(PADDING_INDEX)
+        self._added.fill(PADDING_INDEX)
+        self._rebuild.fill(False)
+        parent_kings = self._kings[self._depth]
+        child_kings = [int(parent_kings[0]), int(parent_kings[1])]
+        if moving_piece.piece_type == chess.KING:
+            child_kings[0 if moving_piece.color == chess.WHITE else 1] = move.to_square
+            board.push(move)
+            try:
+                child_indices = encode_board(board)
+            finally:
+                board.pop()
+        else:
+            child_indices = None
+        for perspective_index, perspective in enumerate((chess.WHITE, chess.BLACK)):
+            parent_king = int(parent_kings[perspective_index])
+            child_king = child_kings[perspective_index]
+            if parent_king != child_king:
+                self._rebuild[perspective_index] = True
+                if child_indices is None:
+                    raise RuntimeError("king move did not build buffered child features")
+                self._added[perspective_index] = child_indices[perspective_index]
+                continue
+            for slot, (square, piece) in enumerate(removed_pieces):
+                self._removed[perspective_index, slot] = (
+                    IncrementalQuantizedEvaluator._feature_index(
+                        parent_king, perspective, square, piece
+                    )
+                )
+            for slot, (square, piece) in enumerate(added_pieces):
+                self._added[perspective_index, slot] = (
+                    IncrementalQuantizedEvaluator._feature_index(
+                        child_king, perspective, square, piece
+                    )
+                )
+
+        _apply_quantized_delta_into(
+            self._accumulators[self._depth],
+            self._accumulators[child_depth],
+            self._removed,
+            self._added,
+            self._rebuild,
+            self.feature_q,
+        )
+        self._kings[child_depth] = child_kings
+        self._depth = child_depth
+
+    def pop(self) -> None:
+        if self._depth <= 0:
+            raise RuntimeError("buffered evaluator cannot pop its root")
+        self._depth -= 1
+
+    def raw_value(self, board: chess.Board) -> float:
+        if self._depth < 0:
+            return super().raw_value(board)
+        return _infer_quantized_accumulators(
+            self._accumulators[self._depth],
             board.turn == chess.WHITE,
             self.feature_scale,
             self.feature_bias,
