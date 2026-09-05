@@ -21,6 +21,7 @@ from distill.features import (
     GROUP_SIZE,
     MAX_CANDIDATES,
     MAX_PIECES,
+    METADATA_DIM,
     PADDING_INDEX,
     encode_board,
 )
@@ -34,6 +35,7 @@ class Batch(TypedDict):
     value_mask: torch.Tensor
     candidate_scores: torch.Tensor
     candidate_mask: torch.Tensor
+    metadata: torch.Tensor
 
 
 def resolve_shards(paths: list[Path]) -> list[Path]:
@@ -50,6 +52,13 @@ def resolve_shards(paths: list[Path]) -> list[Path]:
 
 
 def _tensor_batch(arrays: dict[str, np.ndarray], indices: np.ndarray, device: str) -> Batch:
+    metadata = arrays.get("metadata")
+    if metadata is None:
+        selected_metadata = np.zeros(
+            (*arrays["turns"][indices].shape, METADATA_DIM), dtype=np.float32
+        )
+    else:
+        selected_metadata = metadata[indices]
     return {
         "features": torch.as_tensor(arrays["features"][indices], device=device).long(),
         "turns": torch.as_tensor(arrays["turns"][indices], device=device).bool(),
@@ -58,9 +67,8 @@ def _tensor_batch(arrays: dict[str, np.ndarray], indices: np.ndarray, device: st
         "candidate_scores": torch.as_tensor(
             arrays["candidate_scores"][indices], device=device
         ).float(),
-        "candidate_mask": torch.as_tensor(
-            arrays["candidate_mask"][indices], device=device
-        ).bool(),
+        "candidate_mask": torch.as_tensor(arrays["candidate_mask"][indices], device=device).bool(),
+        "metadata": torch.as_tensor(selected_metadata, device=device).float(),
     }
 
 
@@ -93,9 +101,7 @@ def iterate_batches(
 def _material_value(board: chess.Board) -> float:
     values = {1: 100, 2: 320, 3: 330, 4: 500, 5: 900, 6: 0}
     white = sum(values[piece.piece_type] for piece in board.piece_map().values() if piece.color)
-    black = sum(
-        values[piece.piece_type] for piece in board.piece_map().values() if not piece.color
-    )
+    black = sum(values[piece.piece_type] for piece in board.piece_map().values() if not piece.color)
     score = white - black
     if board.turn == chess.BLACK:
         score = -score
@@ -105,9 +111,7 @@ def _material_value(board: chess.Board) -> float:
 def synthetic_shard(path: Path, records: int, seed: int) -> Path:
     """Create a deterministic tiny dataset that exercises root and ranking losses."""
     rng = random.Random(seed)
-    features = np.full(
-        (records, GROUP_SIZE, 2, MAX_PIECES), PADDING_INDEX, dtype=np.int32
-    )
+    features = np.full((records, GROUP_SIZE, 2, MAX_PIECES), PADDING_INDEX, dtype=np.int32)
     turns = np.zeros((records, GROUP_SIZE), dtype=np.bool_)
     targets = np.zeros((records, GROUP_SIZE), dtype=np.float32)
     value_mask = np.zeros((records, GROUP_SIZE), dtype=np.bool_)
@@ -174,9 +178,7 @@ def losses(
         selected_weights = pair_weights.unsqueeze(0).expand_as(teacher_difference)[pair_mask]
         pair_losses = functional.softplus(-4.0 * predicted_difference[pair_mask])
         ranking_loss = torch.sum(pair_losses * selected_weights) / torch.sum(selected_weights)
-        ranking_accuracy = torch.mean(
-            (predicted_difference[pair_mask] > 0).float()
-        ).item()
+        ranking_accuracy = torch.mean((predicted_difference[pair_mask] > 0).float()).item()
     else:
         ranking_loss = predictions.new_zeros(())
         ranking_accuracy = 0.0
@@ -222,7 +224,7 @@ def evaluate(
     with torch.inference_mode():
         for batch in batches:
             predictions, flipped_predictions = model.forward_with_flipped_turns(
-                batch["features"], batch["turns"]
+                batch["features"], batch["turns"], batch["metadata"]
             )
             loss, metrics = losses(
                 predictions,
@@ -263,6 +265,11 @@ def main() -> None:
     parser.add_argument("--hidden", type=int, default=64)
     parser.add_argument("--bottleneck", type=int, default=32)
     parser.add_argument(
+        "--metadata",
+        action="store_true",
+        help="condition the dense evaluator head on castling, en-passant, and rule-50 state",
+    )
+    parser.add_argument(
         "--initialize-from",
         type=Path,
         help="reuse compatible layers from an exported quantized evaluator",
@@ -271,6 +278,11 @@ def main() -> None:
         "--freeze-feature",
         action="store_true",
         help="train only the dense head after loading a sparse representation",
+    )
+    parser.add_argument(
+        "--freeze-base-head",
+        action="store_true",
+        help="train only the new metadata projection in a metadata ablation",
     )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--smoke", action="store_true")
@@ -281,11 +293,14 @@ def main() -> None:
         or (arguments.max_train_batches is not None and arguments.max_train_batches < 1)
     ):
         parser.error("--epochs, --batch-size, and --max-train-batches must be positive")
-    if min(
-        arguments.ranking_weight,
-        arguments.top_move_weight,
-        arguments.antisymmetry_weight,
-    ) < 0:
+    if (
+        min(
+            arguments.ranking_weight,
+            arguments.top_move_weight,
+            arguments.antisymmetry_weight,
+        )
+        < 0
+    ):
         parser.error("loss weights must be non-negative")
     if arguments.top_k < 1 or arguments.top_k > MAX_CANDIDATES:
         parser.error(f"--top-k must be between 1 and {MAX_CANDIDATES}")
@@ -293,6 +308,8 @@ def main() -> None:
         parser.error("--top-k-ranking-boost must be at least 1")
     if arguments.freeze_feature and arguments.initialize_from is None:
         parser.error("--freeze-feature requires --initialize-from")
+    if arguments.freeze_base_head and (not arguments.metadata or arguments.initialize_from is None):
+        parser.error("--freeze-base-head requires --metadata and --initialize-from")
 
     random.seed(arguments.seed)
     np.random.seed(arguments.seed)
@@ -320,6 +337,7 @@ def main() -> None:
         accumulator=arguments.accumulator,
         hidden=arguments.hidden,
         bottleneck=arguments.bottleneck,
+        metadata=arguments.metadata,
     ).to(device)
     initialized_layers: list[str] = []
     initialization_sha256: str | None = None
@@ -329,9 +347,10 @@ def main() -> None:
             arguments.initialize_from,
             freeze_feature=arguments.freeze_feature,
         )
-        initialization_sha256 = hashlib.sha256(
-            arguments.initialize_from.read_bytes()
-        ).hexdigest()
+        initialization_sha256 = hashlib.sha256(arguments.initialize_from.read_bytes()).hexdigest()
+    if arguments.freeze_base_head:
+        for layer in (model.hidden_one, model.hidden_two, model.output):
+            layer.requires_grad_(False)
     optimizer = torch.optim.AdamW(
         (parameter for parameter in model.parameters() if parameter.requires_grad),
         lr=arguments.learning_rate,
@@ -361,7 +380,7 @@ def main() -> None:
                 break
             optimizer.zero_grad(set_to_none=True)
             predictions, flipped_predictions = model.forward_with_flipped_turns(
-                batch["features"], batch["turns"]
+                batch["features"], batch["turns"], batch["metadata"]
             )
             loss, _ = losses(
                 predictions,
@@ -433,6 +452,8 @@ def main() -> None:
             "initialization_sha256": initialization_sha256,
             "initialized_layers": initialized_layers,
             "feature_frozen": arguments.freeze_feature,
+            "base_head_frozen": arguments.freeze_base_head,
+            "metadata": arguments.metadata,
             "seed": arguments.seed,
             "best_epoch": best_epoch,
             "best_validation_loss": best_validation_loss,

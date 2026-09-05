@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from distill.features import FEATURE_DIM, PADDING_INDEX
+from distill.features import FEATURE_DIM, METADATA_DIM, PADDING_INDEX
 
 FORMAT_VERSION = 1
 
@@ -17,44 +17,76 @@ FORMAT_VERSION = 1
 class SparseValueNetwork(nn.Module):
     """A compact HalfKP-style scalar evaluator."""
 
-    def __init__(self, accumulator: int = 128, hidden: int = 64, bottleneck: int = 32) -> None:
+    def __init__(
+        self,
+        accumulator: int = 128,
+        hidden: int = 64,
+        bottleneck: int = 32,
+        *,
+        metadata: bool = False,
+    ) -> None:
         super().__init__()
         self.accumulator = accumulator
         self.hidden = hidden
         self.bottleneck = bottleneck
-        self.feature = nn.Embedding(
-            FEATURE_DIM + 1, accumulator, padding_idx=PADDING_INDEX
-        )
+        self.feature = nn.Embedding(FEATURE_DIM + 1, accumulator, padding_idx=PADDING_INDEX)
         self.feature_bias = nn.Parameter(torch.zeros(accumulator))
         self.hidden_one = nn.Linear(2 * accumulator, hidden)
+        self.metadata_projection = nn.Linear(METADATA_DIM, hidden, bias=False) if metadata else None
+        if self.metadata_projection is not None:
+            nn.init.zeros_(self.metadata_projection.weight)
         self.hidden_two = nn.Linear(hidden, bottleneck)
         self.output = nn.Linear(bottleneck, 1)
         nn.init.normal_(self.feature.weight, std=0.01)
         with torch.no_grad():
             self.feature.weight[PADDING_INDEX].zero_()
 
-    def _head(self, mover: torch.Tensor, opponent: torch.Tensor) -> torch.Tensor:
-        hidden = torch.relu(self.hidden_one(torch.cat((mover, opponent), dim=-1)))
+    def _head(
+        self,
+        mover: torch.Tensor,
+        opponent: torch.Tensor,
+        metadata: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        hidden = self.hidden_one(torch.cat((mover, opponent), dim=-1))
+        if self.metadata_projection is not None:
+            if metadata is None:
+                raise ValueError("metadata-enabled evaluator requires metadata")
+            hidden = hidden + self.metadata_projection(metadata)
+        hidden = torch.relu(hidden)
         hidden = torch.relu(self.hidden_two(hidden))
         return torch.tanh(self.output(hidden)).squeeze(-1)
 
     def forward_with_flipped_turns(
-        self, features: torch.Tensor, turns: torch.Tensor
+        self,
+        features: torch.Tensor,
+        turns: torch.Tensor,
+        metadata: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate actual and turn-flipped mover order with one sparse accumulation."""
         accumulator = self.feature(features).sum(dim=-2) + self.feature_bias
         white = accumulator[..., 0, :]
         black = accumulator[..., 1, :]
-        white_to_move = self._head(white, black)
-        black_to_move = self._head(black, white)
+        white_metadata = metadata
+        black_metadata = None
+        if metadata is not None:
+            black_metadata = torch.cat(
+                (metadata[..., 2:4], metadata[..., :2], metadata[..., 4:]), dim=-1
+            )
+        white_to_move = self._head(white, black, white_metadata)
+        black_to_move = self._head(black, white, black_metadata)
         turn = turns.bool()
         prediction = torch.where(turn, white_to_move, black_to_move)
         flipped = torch.where(turn, black_to_move, white_to_move)
         return prediction, flipped
 
-    def forward(self, features: torch.Tensor, turns: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        features: torch.Tensor,
+        turns: torch.Tensor,
+        metadata: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Evaluate ``(..., 2, 32)`` sparse indices from the side to move."""
-        prediction, _ = self.forward_with_flipped_turns(features, turns)
+        prediction, _ = self.forward_with_flipped_turns(features, turns, metadata)
         return prediction
 
 
@@ -90,9 +122,7 @@ def initialize_from_quantized(
                 f"accumulator mismatch: checkpoint={accumulator}, model={model.accumulator}"
             )
 
-        feature = archive["feature_q"].astype(np.float32) * np.float32(
-            archive["feature_scale"]
-        )
+        feature = archive["feature_q"].astype(np.float32) * np.float32(archive["feature_scale"])
         with torch.no_grad():
             model.feature.weight[:FEATURE_DIM].copy_(torch.from_numpy(feature))
             model.feature.weight[PADDING_INDEX].zero_()
@@ -106,13 +136,18 @@ def initialize_from_quantized(
             for name, layer in dense_layers:
                 weight = archive[f"{name}_weight"]
                 bias = archive[f"{name}_bias"]
-                if tuple(weight.shape) != tuple(layer.weight.shape) or tuple(
-                    bias.shape
-                ) != tuple(layer.bias.shape):
+                if tuple(weight.shape) != tuple(layer.weight.shape) or tuple(bias.shape) != tuple(
+                    layer.bias.shape
+                ):
                     continue
                 layer.weight.copy_(torch.from_numpy(weight))
                 layer.bias.copy_(torch.from_numpy(bias))
                 copied.append(name)
+            if model.metadata_projection is not None and "metadata_hidden_weight" in archive.files:
+                model.metadata_projection.weight.copy_(
+                    torch.from_numpy(archive["metadata_hidden_weight"])
+                )
+                copied.append("metadata_projection")
 
     if freeze_feature:
         model.feature.weight.requires_grad_(False)
@@ -131,20 +166,29 @@ def export_quantized(
     feature = model.feature.weight[:FEATURE_DIM].detach().numpy().astype(np.float32)
     feature_q, feature_scale = _quantize_int8(feature)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    arrays: dict[str, np.ndarray] = {
+        "format_version": np.array(FORMAT_VERSION, dtype=np.int32),
+        "feature_dim": np.array(FEATURE_DIM, dtype=np.int32),
+        "accumulator": np.array(model.accumulator, dtype=np.int32),
+        "feature_q": feature_q,
+        "feature_scale": np.array(feature_scale, dtype=np.float32),
+        "feature_bias": model.feature_bias.detach().numpy().astype(np.float32),
+        "hidden_one_weight": model.hidden_one.weight.detach().numpy().astype(np.float32),
+        "hidden_one_bias": model.hidden_one.bias.detach().numpy().astype(np.float32),
+        "hidden_two_weight": model.hidden_two.weight.detach().numpy().astype(np.float32),
+        "hidden_two_bias": model.hidden_two.bias.detach().numpy().astype(np.float32),
+        "output_weight": model.output.weight.detach().numpy().astype(np.float32),
+        "output_bias": model.output.bias.detach().numpy().astype(np.float32),
+    }
+    if model.metadata_projection is not None:
+        arrays["metadata_format_version"] = np.array(1, dtype=np.int32)
+        arrays["metadata_dim"] = np.array(METADATA_DIM, dtype=np.int32)
+        arrays["metadata_hidden_weight"] = (
+            model.metadata_projection.weight.detach().numpy().astype(np.float32)
+        )
     np.savez_compressed(
         destination,
-        format_version=np.array(FORMAT_VERSION, dtype=np.int32),
-        feature_dim=np.array(FEATURE_DIM, dtype=np.int32),
-        accumulator=np.array(model.accumulator, dtype=np.int32),
-        feature_q=feature_q,
-        feature_scale=np.array(feature_scale, dtype=np.float32),
-        feature_bias=model.feature_bias.detach().numpy().astype(np.float32),
-        hidden_one_weight=model.hidden_one.weight.detach().numpy().astype(np.float32),
-        hidden_one_bias=model.hidden_one.bias.detach().numpy().astype(np.float32),
-        hidden_two_weight=model.hidden_two.weight.detach().numpy().astype(np.float32),
-        hidden_two_bias=model.hidden_two.bias.detach().numpy().astype(np.float32),
-        output_weight=model.output.weight.detach().numpy().astype(np.float32),
-        output_bias=model.output.bias.detach().numpy().astype(np.float32),
+        **arrays,
     )
     report: dict[str, object] = {
         "format_version": FORMAT_VERSION,
@@ -154,6 +198,7 @@ def export_quantized(
         "bottleneck": model.bottleneck,
         "bytes": destination.stat().st_size,
         "feature_scale": float(feature_scale),
+        "metadata": model.metadata_projection is not None,
         **(metadata or {}),
     }
     destination.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")

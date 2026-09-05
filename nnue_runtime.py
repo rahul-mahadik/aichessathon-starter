@@ -381,12 +381,55 @@ class QuantizedEvaluator:
             self.hidden_two_bias = archive["hidden_two_bias"].copy()
             self.output_weight = archive["output_weight"].copy()
             self.output_bias = archive["output_bias"].copy()
+            self.metadata_hidden_weight = (
+                archive["metadata_hidden_weight"].copy()
+                if "metadata_hidden_weight" in archive.files
+                else None
+            )
         self.antisymmetric = antisymmetric
         if value_scale_cp <= 0:
             raise ValueError("value_scale_cp must be positive")
         self.value_scale_cp = value_scale_cp
 
     def raw_value(self, board: chess.Board) -> float:
+        if self.metadata_hidden_weight is not None:
+            accumulator_q = _quantized_accumulators(encode_board(board), self.feature_q)
+            metadata = encode_metadata(board)
+            reverse_metadata = np.concatenate((metadata[2:4], metadata[:2], metadata[4:]))
+            actual_metadata = metadata if board.turn == chess.WHITE else reverse_metadata
+            actual_bias = self.hidden_one_bias + self.metadata_hidden_weight @ actual_metadata
+            value = _infer_quantized_accumulators(
+                accumulator_q,
+                board.turn == chess.WHITE,
+                self.feature_scale,
+                self.feature_bias,
+                self.hidden_one_weight,
+                actual_bias,
+                self.hidden_two_weight,
+                self.hidden_two_bias,
+                self.output_weight,
+                self.output_bias,
+                False,
+            )
+            if not self.antisymmetric:
+                return value
+            reverse_bias = self.hidden_one_bias + self.metadata_hidden_weight @ (
+                reverse_metadata if board.turn == chess.WHITE else metadata
+            )
+            reverse = _infer_quantized_accumulators(
+                accumulator_q,
+                board.turn != chess.WHITE,
+                self.feature_scale,
+                self.feature_bias,
+                self.hidden_one_weight,
+                reverse_bias,
+                self.hidden_two_weight,
+                self.hidden_two_bias,
+                self.output_weight,
+                self.output_bias,
+                False,
+            )
+            return 0.5 * (value - reverse)
         return _infer(
             encode_board(board),
             board.turn == chess.WHITE,
@@ -452,7 +495,11 @@ class PolicyQuantizedEvaluator(QuantizedEvaluator):
             )
         mover = 0 if board.turn == chess.WHITE else 1
         context_input = np.concatenate(
-            (accumulators[mover], accumulators[1 - mover], encode_metadata(board))
+            (
+                accumulators[mover],
+                accumulators[1 - mover],
+                self._oriented_metadata(board),
+            )
         )
         context = np.maximum(
             self.policy_context_weight @ context_input + self.policy_context_bias,
@@ -470,6 +517,13 @@ class PolicyQuantizedEvaluator(QuantizedEvaluator):
         scores += (move_vectors @ self.policy_move_bias_weight.T).reshape(-1)
         scores += float(self.policy_move_bias_bias[0])
         return dict(zip(moves, scores.tolist(), strict=True))
+
+    @staticmethod
+    def _oriented_metadata(board: chess.Board) -> np.ndarray:
+        metadata = encode_metadata(board)
+        if board.turn == chess.WHITE:
+            return metadata
+        return np.concatenate((metadata[2:4], metadata[:2], metadata[4:]))
 
 
 class IntegerQuantizedEvaluator(QuantizedEvaluator):

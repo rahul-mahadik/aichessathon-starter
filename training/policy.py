@@ -46,7 +46,9 @@ class SparsePolicyNetwork(nn.Module):
         black = accumulator[:, 1]
         mover = torch.where(turns[:, None], white, black)
         opponent = torch.where(turns[:, None], black, white)
-        context = torch.relu(self.context(torch.cat((mover, opponent, metadata), dim=-1)))
+        reversed_metadata = torch.cat((metadata[:, 2:4], metadata[:, :2], metadata[:, 4:]), dim=-1)
+        oriented_metadata = torch.where(turns[:, None], metadata, reversed_metadata)
+        context = torch.relu(self.context(torch.cat((mover, opponent, oriented_metadata), dim=-1)))
         moves = (
             self.from_embedding(move_from)
             + self.to_embedding(move_to)

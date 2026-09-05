@@ -444,6 +444,27 @@ class DistillationTests(unittest.TestCase):
             np.array([actual[move] for move in moves]), expected, rtol=1e-5, atol=1e-5
         )
 
+    def test_metadata_runtime_tracks_pytorch_and_preserves_antisymmetry(self) -> None:
+        torch.manual_seed(29)
+        model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8, metadata=True).eval()
+        assert model.metadata_projection is not None
+        torch.nn.init.normal_(model.metadata_projection.weight, std=0.1)
+        board = chess.Board("r3k2r/8/8/8/8/8/8/R3K2R b Kq - 47 1")
+        features = torch.as_tensor(encode_board(board)).long().unsqueeze(0)
+        turns = torch.tensor([board.turn])
+        metadata = torch.as_tensor(encode_metadata(board)).unsqueeze(0)
+        direct, flipped = model.forward_with_flipped_turns(features, turns, metadata)
+        expected = float((0.5 * (direct - flipped)).item())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.npz"
+            export_quantized(model, path)
+            evaluator = QuantizedEvaluator(path, antisymmetric=True)
+            actual = evaluator.raw_value(board)
+            board.turn = not board.turn
+            reverse = evaluator.raw_value(board)
+        self.assertAlmostEqual(actual, expected, delta=0.02)
+        self.assertAlmostEqual(actual, -reverse, places=6)
+
     def test_training_reuses_accumulator_for_turn_flip(self) -> None:
         torch.manual_seed(4)
         model = SparseValueNetwork(accumulator=16, hidden=12, bottleneck=8).eval()
