@@ -4,6 +4,7 @@ set -euo pipefail
 RUN_ID="${DISTILL_RUN_ID:-phase-d-20260903a}"
 EVAL_RUN_ID="${DISTILL_EVAL_RUN_ID:-eval-20260901a}"
 MODELS="${DISTILL_MODELS:-phase-d-d100m-c4p5 phase-d-d100m-c20 phase-d-d100m-c40}"
+EVAL_NAMESPACE="${DISTILL_EVAL_NAMESPACE:-phase-d}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 REPOSITORY="${AICHESSATHON_REPOSITORY:-/home/ec2-user/aichessathon}"
 UV_BIN="${UV_BIN:-/usr/local/bin/uv}"
@@ -31,7 +32,7 @@ if (( ${#EXTERNAL_INPUTS[@]} == 0 )); then
 fi
 
 for model in $MODELS; do
-  if [[ ! "$model" =~ ^phase-d-[a-zA-Z0-9-]+$ ]]; then
+  if [[ ! "$model" =~ ^phase-[a-zA-Z0-9-]+$ ]]; then
     echo "DISTILL_MODELS contains an unsafe model name: $model" >&2
     exit 2
   fi
@@ -41,11 +42,11 @@ for model in $MODELS; do
   "$VENV_DIRECTORY/bin/python" -m distill.compare_evaluators \
     "${EXTERNAL_INPUTS[@]}" --model "$model_path" --antisymmetric --output "$output"
 done
-aws s3 sync "$WORK_DIRECTORY/results/" "$RUN_PREFIX/evaluator/phase-d/" --only-show-errors
+aws s3 sync "$WORK_DIRECTORY/results/" "$RUN_PREFIX/evaluator/$EVAL_NAMESPACE/" --only-show-errors
 
-jq -n --arg run_id "$RUN_ID" --arg models "$MODELS" \
-  '{run_id:$run_id,models:$models,status:"complete"}' >"$WORK_DIRECTORY/status.json"
-aws s3 cp "$WORK_DIRECTORY/status.json" "$RUN_PREFIX/status/phase-d-evaluator.json" \
+jq -n --arg run_id "$RUN_ID" --arg models "$MODELS" --arg namespace "$EVAL_NAMESPACE" \
+  '{run_id:$run_id,models:$models,namespace:$namespace,status:"complete"}' >"$WORK_DIRECTORY/status.json"
+aws s3 cp "$WORK_DIRECTORY/status.json" "$RUN_PREFIX/status/${EVAL_NAMESPACE}-evaluator.json" \
   --only-show-errors
 
 if [[ "${DISTILL_SHUTDOWN:-1}" == "1" ]]; then
