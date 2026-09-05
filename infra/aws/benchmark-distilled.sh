@@ -27,8 +27,8 @@ fi
 RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 
 for mode in "$CANDIDATE_SEARCH" "$OPPONENT_SEARCH"; do
-  if [[ "$mode" != "baseline" && "$mode" != "strong" ]]; then
-    echo "search mode must be baseline or strong: $mode" >&2
+  if [[ "$mode" != "baseline" && "$mode" != "strong" && "$mode" != "frontier" ]]; then
+    echo "search mode must be baseline, strong, or frontier: $mode" >&2
     exit 2
   fi
 done
@@ -40,8 +40,10 @@ for mode in "$CANDIDATE_RUNTIME" "$OPPONENT_RUNTIME"; do
 done
 
 mkdir -p "$CANDIDATE/weights" "$OPPONENT/weights"
-cp agent.py nnue_runtime.py search_engine.py strong_search_engine.py "$CANDIDATE/"
-cp agent.py nnue_runtime.py search_engine.py strong_search_engine.py "$OPPONENT/"
+cp agent.py nnue_runtime.py search_engine.py strong_search_engine.py \
+  frontier_search_engine.py "$CANDIDATE/"
+cp agent.py nnue_runtime.py search_engine.py strong_search_engine.py \
+  frontier_search_engine.py "$OPPONENT/"
 aws s3 cp "$RUN_PREFIX/models/$MODEL_NAME/${MODEL_NAME}.npz" \
   "$CANDIDATE/weights/nnue.npz"
 candidate_antisymmetric=false

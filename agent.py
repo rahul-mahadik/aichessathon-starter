@@ -7,6 +7,7 @@ from pathlib import Path
 
 import chess
 
+from frontier_search_engine import FrontierSearchEngine
 from nnue_runtime import IncrementalQuantizedEvaluator, QuantizedEvaluator
 from search_engine import SearchEngine, handcrafted_evaluation
 from strong_search_engine import StrongSearchEngine
@@ -21,7 +22,7 @@ _search_mode = str(_config.get("search", os.environ.get("AICHESSATHON_SEARCH", "
 _runtime_mode = str(
     _config.get("runtime", os.environ.get("AICHESSATHON_NNUE_RUNTIME", "reference"))
 )
-if _search_mode not in {"baseline", "strong"}:
+if _search_mode not in {"baseline", "strong", "frontier"}:
     raise ValueError(f"unsupported search mode: {_search_mode}")
 if _runtime_mode not in {"reference", "incremental"}:
     raise ValueError(f"unsupported NNUE runtime mode: {_runtime_mode}")
@@ -37,9 +38,12 @@ if _WEIGHTS.exists():
 else:
     _evaluator = handcrafted_evaluation
 
-_search: SearchEngine | StrongSearchEngine = (
-    StrongSearchEngine(_evaluator) if _search_mode == "strong" else SearchEngine(_evaluator)
-)
+if _search_mode == "frontier":
+    _search: SearchEngine | StrongSearchEngine = FrontierSearchEngine(_evaluator)
+elif _search_mode == "strong":
+    _search = StrongSearchEngine(_evaluator)
+else:
+    _search = SearchEngine(_evaluator)
 
 _FIXED_NODES = int(os.environ.get("AICHESSATHON_FIXED_NODES", "0"))
 if _FIXED_NODES < 0:

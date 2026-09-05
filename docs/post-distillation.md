@@ -11,6 +11,12 @@ The post-distillation track varies two independent deployment axes after the mod
 | Search | current PVS/TT/qsearch | stronger PVS with aspiration, null move, LMR, futility, check extensions, countermoves, and delta-pruned qsearch |
 | Runtime | rebuild sparse accumulators at every leaf | incrementally update quantized accumulators on move/unmove |
 
+After the first strong-search bundle passes its gate, `frontier_search_engine.py` remains an
+isolated challenger rather than replacing it. The frontier bundle adds mate-distance pruning,
+razoring, adaptive LMR, shallow late-move pruning, limited ProbCut, capture history, and forcing
+checks in the first quiescence ply. Run `infra/aws/phase-f-frontier-search.sh MODEL` to compare it
+against the frozen strong search at equal nodes and under the clock.
+
 The stronger search is team-written and lives in `strong_search_engine.py`. It uses standard
 published alpha-beta techniques and contains no third-party engine code or tuned parameter table.
 The competition submission must never include the local Stockfish or Sunfish controls.
