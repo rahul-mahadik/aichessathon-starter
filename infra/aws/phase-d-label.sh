@@ -15,6 +15,12 @@ ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is requi
 RUN_PREFIX="${ARTIFACTS_URI%/}/teacher/runs/${RUN_ID}"
 WAIT_SECONDS="${PHASE_D_WAIT_SECONDS:-30}"
 LABEL_WAIT_LIMIT="${PHASE_D_LABEL_WAIT_LIMIT:-480}"
+COORDINATE="${PHASE_D_COORDINATE:-1}"
+
+if [[ "$COORDINATE" != "0" && "$COORDINATE" != "1" ]]; then
+  echo "PHASE_D_COORDINATE must be zero or one" >&2
+  exit 2
+fi
 
 has_coordinator=0
 for worker_index in "${WORKER_INDICES[@]}"; do
@@ -47,7 +53,7 @@ for worker_index in "${WORKER_INDICES[@]}"; do
   fi
 done
 
-if (( ! has_coordinator )); then
+if (( ! has_coordinator || ! COORDINATE )); then
   sudo shutdown -h +1
   exit 0
 fi
