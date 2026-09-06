@@ -59,6 +59,8 @@ if (( ${#EXCLUDE_PATHS[@]} == 0 )); then
   echo "no exclusion corpus files were found" >&2
   exit 1
 fi
+EXCLUDE_LIST="$WORK_DIRECTORY/exclude-paths.txt"
+printf '%s\n' "${EXCLUDE_PATHS[@]}" >"$EXCLUDE_LIST"
 
 SOURCE_SHARDS=()
 source_start=$((FIRST_SOURCE + WORKER_INDEX * SOURCES_PER_WORKER))
@@ -74,7 +76,7 @@ done
   --shards-per-tier "$LOCAL_SHARDS" \
   --source-shards "${SOURCE_SHARDS[@]}" \
   --seed "$((SEED_BASE + WORKER_INDEX))" \
-  --exclude "${EXCLUDE_PATHS[@]}"
+  --exclude-list "$EXCLUDE_LIST"
 
 for ((local_shard = 0; local_shard < LOCAL_SHARDS; local_shard++)); do
   local_path="$(printf '%s/medium/part-%05d.epd' "$CORPUS_DIRECTORY" "$local_shard")"

@@ -233,7 +233,19 @@ def main() -> None:
         default=[],
         help="EPD/FEN files whose evaluator-visible positions must not enter the sample",
     )
+    parser.add_argument(
+        "--exclude-list",
+        type=Path,
+        help="newline-delimited exclusion paths for corpora too large for the command line",
+    )
     arguments = parser.parse_args()
+    exclude_paths = list(arguments.exclude)
+    if arguments.exclude_list is not None:
+        exclude_paths.extend(
+            Path(line.strip())
+            for line in arguments.exclude_list.read_text().splitlines()
+            if line.strip()
+        )
     manifest = sample_corpus(
         output=arguments.output,
         cache=arguments.cache,
@@ -242,7 +254,7 @@ def main() -> None:
         shards_per_tier=arguments.shards_per_tier,
         source_shards=arguments.source_shards,
         seed=arguments.seed,
-        exclude_paths=arguments.exclude,
+        exclude_paths=exclude_paths,
     )
     print(json.dumps(manifest, indent=2))
 
