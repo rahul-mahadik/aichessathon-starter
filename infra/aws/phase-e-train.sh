@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CELL="${1:?cell required: H256FROZEN, H128FROZEN, H64FROZEN, H32FROZEN, or H64REFINE}"
+CELL="${1:?cell required: H1024FROZEN, H512FROZEN, H256FROZEN, H128FROZEN, H64FROZEN, H32FROZEN, or H64REFINE}"
 RUN_ID="${DISTILL_RUN_ID:-phase-d-20260903a}"
 ARTIFACTS_URI="${AICHESSATHON_ARTIFACTS_URI:?AICHESSATHON_ARTIFACTS_URI is required}"
 WORK_ROOT="${DISTILL_WORK_ROOT:-/home/ec2-user/aichessathon-work}"
@@ -9,6 +9,16 @@ DATASETS="phase-c-base-1m phase-c-extra-2m phase-c-extra-7m phase-d-extra-90m"
 EXPECTED_RECORDS=100000000
 
 case "$CELL" in
+  H1024FROZEN)
+    MODEL_NAME=phase-e-c40-h1024-frozen
+    TEACHER_NAME=phase-d-d100m-c40
+    ARCHITECTURE=(--accumulator 1024 --hidden 1024 --bottleneck 512)
+    ;;
+  H512FROZEN)
+    MODEL_NAME=phase-e-c40-h512-frozen
+    TEACHER_NAME=phase-d-d100m-c40
+    ARCHITECTURE=(--accumulator 1024 --hidden 512 --bottleneck 256)
+    ;;
   H256FROZEN)
     MODEL_NAME=phase-e-c40-h256-frozen
     TEACHER_NAME=phase-d-d100m-c40
