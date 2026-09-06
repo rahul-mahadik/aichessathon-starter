@@ -129,16 +129,30 @@ def build_parallel(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("inputs", type=Path, nargs="+")
+    parser.add_argument("inputs", type=Path, nargs="*")
+    parser.add_argument(
+        "--input-list",
+        type=Path,
+        help="newline-delimited input paths; avoids command-line limits for large corpora",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--records-per-shard", type=int, default=100_000)
     parser.add_argument("--cp-scale", type=float, default=DEFAULT_CP_SCALE)
     parser.add_argument("--workers", type=int, default=1)
     arguments = parser.parse_args()
+    inputs = list(arguments.inputs)
+    if arguments.input_list is not None:
+        inputs.extend(
+            Path(line.strip())
+            for line in arguments.input_list.read_text().splitlines()
+            if line.strip()
+        )
+    if not inputs:
+        parser.error("pass input shards or --input-list")
     if arguments.records_per_shard < 1 or arguments.cp_scale <= 0 or arguments.workers < 1:
         parser.error("--records-per-shard, --cp-scale, and --workers must be positive")
     metadata = build_parallel(
-        arguments.inputs,
+        inputs,
         arguments.output,
         arguments.records_per_shard,
         arguments.cp_scale,

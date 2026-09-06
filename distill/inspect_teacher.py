@@ -84,11 +84,25 @@ def inspect(paths: list[Path]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("inputs", type=Path, nargs="+")
+    parser.add_argument("inputs", type=Path, nargs="*")
+    parser.add_argument(
+        "--input-list",
+        type=Path,
+        help="newline-delimited input paths; avoids command-line limits for large corpora",
+    )
     parser.add_argument("--expected-records", type=int)
     parser.add_argument("--expected-candidates", type=int, default=8)
     arguments = parser.parse_args()
-    summary = inspect(arguments.inputs)
+    inputs = list(arguments.inputs)
+    if arguments.input_list is not None:
+        inputs.extend(
+            Path(line.strip())
+            for line in arguments.input_list.read_text().splitlines()
+            if line.strip()
+        )
+    if not inputs:
+        parser.error("pass input shards or --input-list")
+    summary = inspect(inputs)
     print(json.dumps(summary, indent=2))
     if arguments.expected_records is not None and summary["records"] != arguments.expected_records:
         raise SystemExit(
