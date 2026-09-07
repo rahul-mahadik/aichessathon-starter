@@ -101,6 +101,7 @@ export BENCH_OPPONENT_SEARCH="$OPPONENT_SEARCH"
 export BENCH_OPPONENT_RUNTIME="$OPPONENT_RUNTIME"
 export BENCH_OPPONENT_VALUE_SCALE_CP="$OPPONENT_VALUE_SCALE_CP"
 
+benchmark_status=0
 BENCH_AGENT="$CANDIDATE" \
 BENCH_OPPONENT="$OPPONENT" \
 BENCH_ROUNDS="$ROUNDS" \
@@ -109,9 +110,12 @@ BENCH_FIXED_NODES="$FIXED_NODES" \
 BENCH_WORKERS="$WORKERS" \
 BENCH_OUTPUT="$OUTPUT" \
 AICHESSATHON_ARTIFACTS_URI= \
-  bash infra/aws/benchmark.sh
-aws s3 cp "$OUTPUT" "$RUN_PREFIX/benchmarks/$(basename "$OUTPUT")"
+  bash infra/aws/benchmark.sh || benchmark_status=$?
+if [[ -f "$OUTPUT" ]]; then
+  aws s3 cp "$OUTPUT" "$RUN_PREFIX/benchmarks/$(basename "$OUTPUT")"
+fi
 
 if [[ "${BENCH_SHUTDOWN:-1}" == "1" ]]; then
   sudo shutdown -h +1
 fi
+exit "$benchmark_status"
