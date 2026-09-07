@@ -1,5 +1,6 @@
 .venv/
 .venv-aws-training/
+.DS_Store
 __pycache__/
 .mypy_cache/
 .ruff_cache/
@@ -11,3 +12,4 @@ benchmark-results/
 training/checkpoints/
 training/data/
 training/runs/
+weights/*.npz

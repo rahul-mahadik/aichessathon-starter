@@ -455,6 +455,10 @@ class QuantizedEvaluator:
 class _PolicyHeadMixin:
     """Load and execute the policy arrays shared by float and integer values."""
 
+    feature_q: np.ndarray
+    feature_scale: float
+    feature_bias: np.ndarray
+
     def _load_policy_head(self, path: Path) -> None:
         with np.load(path, allow_pickle=False) as archive:
             if "policy_format_version" not in archive.files:
